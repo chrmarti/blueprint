@@ -7,6 +7,7 @@ import { loadSettings, saveSettings, loadHistory, exportProject, importProject }
 import type { CompilationEntry } from './storage';
 import { setOutput } from './compiler';
 import { loadPreview } from './preview';
+import { startSignIn, signOut, isSignedIn, getUser, type GitHubUser } from './auth';
 
 let modalEl: HTMLElement;
 let historyDrawerEl: HTMLElement;
@@ -33,6 +34,15 @@ export function initSettings(): void {
   const tempDisplay = document.getElementById('temp-display') as HTMLSpanElement;
   tempSlider?.addEventListener('input', () => {
     tempDisplay.textContent = tempSlider.value;
+  });
+
+  // Auth: sign-in button
+  document.getElementById('sign-in-btn')?.addEventListener('click', handleSignIn);
+  document.getElementById('toolbar-sign-in')?.addEventListener('click', handleSignIn);
+
+  // Auth: sign-out button
+  document.getElementById('sign-out-btn')?.addEventListener('click', () => {
+    signOut();
   });
 
   // Export / Import project
@@ -82,19 +92,16 @@ function closeModal(): void {
 
 function populateForm(): void {
   const s = loadSettings();
-  (document.getElementById('setting-api-key') as HTMLInputElement).value = s.apiKey;
-  (document.getElementById('setting-endpoint') as HTMLInputElement).value = s.endpoint;
   (document.getElementById('setting-model') as HTMLInputElement).value = s.model;
   (document.getElementById('setting-temp') as HTMLInputElement).value = String(s.temperature);
   (document.getElementById('temp-display') as HTMLSpanElement).textContent = String(s.temperature);
   (document.getElementById('setting-max-tokens') as HTMLInputElement).value = String(s.maxTokens);
   (document.getElementById('setting-font-size') as HTMLInputElement).value = String(s.fontSize);
+  updateAuthUI(getUser());
 }
 
 function saveAndClose(): void {
   const s = loadSettings();
-  s.apiKey = (document.getElementById('setting-api-key') as HTMLInputElement).value;
-  s.endpoint = (document.getElementById('setting-endpoint') as HTMLInputElement).value;
   s.model = (document.getElementById('setting-model') as HTMLInputElement).value;
   s.temperature = parseFloat((document.getElementById('setting-temp') as HTMLInputElement).value);
   s.maxTokens = parseInt((document.getElementById('setting-max-tokens') as HTMLInputElement).value, 10);
@@ -105,6 +112,74 @@ function saveAndClose(): void {
   // Apply font size immediately
   const editor = document.getElementById('editor-area') as HTMLTextAreaElement;
   editor.style.fontSize = `${s.fontSize}px`;
+}
+
+async function handleSignIn(): Promise<void> {
+  const statusEl = document.getElementById('auth-status') as HTMLElement;
+  const signedOutEl = document.getElementById('auth-signed-out') as HTMLElement;
+  const deviceFlowEl = document.getElementById('auth-device-flow') as HTMLElement;
+
+  // Ensure modal is open
+  if (!modalEl.classList.contains('open')) openModal();
+
+  signedOutEl.style.display = 'none';
+  deviceFlowEl.style.display = 'block';
+
+  try {
+    await startSignIn(
+      (msg) => { statusEl.textContent = msg; },
+      (code, uri) => {
+        const codeDisplay = document.getElementById('device-code-display') as HTMLElement;
+        codeDisplay.textContent = code;
+
+        const copyBtn = document.getElementById('copy-open-github') as HTMLButtonElement;
+        copyBtn.onclick = () => {
+          navigator.clipboard.writeText(code);
+          window.open(uri, '_blank');
+        };
+      },
+    );
+  } catch (err) {
+    statusEl.textContent = (err as Error).message;
+    statusEl.style.color = 'var(--error)';
+    // Show sign-in button again after a delay
+    setTimeout(() => {
+      deviceFlowEl.style.display = 'none';
+      signedOutEl.style.display = 'block';
+      statusEl.style.color = '';
+    }, 3000);
+  }
+}
+
+export function updateAuthUI(user: GitHubUser | null): void {
+  const signedOutEl = document.getElementById('auth-signed-out') as HTMLElement;
+  const deviceFlowEl = document.getElementById('auth-device-flow') as HTMLElement;
+  const signedInEl = document.getElementById('auth-signed-in') as HTMLElement;
+  const toolbarAvatar = document.getElementById('toolbar-avatar') as HTMLImageElement;
+  const toolbarUser = document.getElementById('toolbar-user') as HTMLElement;
+  const toolbarSignIn = document.getElementById('toolbar-sign-in') as HTMLElement;
+
+  if (user) {
+    signedOutEl.style.display = 'none';
+    deviceFlowEl.style.display = 'none';
+    signedInEl.style.display = 'block';
+    (document.getElementById('user-avatar') as HTMLImageElement).src = user.avatar_url;
+    (document.getElementById('user-login') as HTMLElement).textContent = user.login;
+
+    toolbarAvatar.src = user.avatar_url;
+    toolbarAvatar.style.display = 'block';
+    toolbarUser.textContent = user.login;
+    toolbarUser.style.display = 'block';
+    toolbarSignIn.style.display = 'none';
+  } else {
+    signedOutEl.style.display = 'block';
+    deviceFlowEl.style.display = 'none';
+    signedInEl.style.display = 'none';
+
+    toolbarAvatar.style.display = 'none';
+    toolbarUser.style.display = 'none';
+    toolbarSignIn.style.display = 'block';
+  }
 }
 
 function toggleHistory(): void {

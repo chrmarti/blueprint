@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { loadSettings, saveOutput, pushHistory } from './storage';
+import { getCopilotToken, isSignedIn } from './auth';
 
 const SYSTEM_PROMPT = `You are a code generator. Given a structured markdown document describing an application, produce a complete, self-contained HTML file with embedded CSS and JavaScript that implements every requirement described. Output only the HTML file content, no explanation.`;
 
@@ -26,22 +27,23 @@ export function getOutput(): string {
 }
 
 export async function compile(markdown: string): Promise<void> {
-  const settings = loadSettings();
-
-  if (!settings.apiKey) {
-    setStatus('error', 'No API key configured. Open Settings to add one.');
+  if (!isSignedIn()) {
+    setStatus('error', 'Not signed in. Click the Sign in button in the toolbar or open Settings.');
     return;
   }
 
+  const settings = loadSettings();
   setStatus('info', 'Compiling...');
   outputEl.value = '';
 
   try {
-    const response = await fetch(settings.endpoint, {
+    const copilotToken = await getCopilotToken();
+
+    const response = await fetch('/api/copilot/chat', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${settings.apiKey}`,
+        'Authorization': `Bearer ${copilotToken}`,
       },
       body: JSON.stringify({
         model: settings.model,

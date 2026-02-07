@@ -23,16 +23,18 @@ Blueprint Compiler is a self-hosting tool: a markdown document describes an appl
 /built/               ← TypeScript source
   main.ts             ← entry point, boots all modules
   editor.ts           ← editor panel (textarea, outline, markdown preview)
-  compiler.ts         ← compilation panel (Copilot SDK streaming call)
+  compiler.ts         ← compilation panel (Copilot API streaming call)
   preview.ts          ← preview panel (iframe sandbox, console forwarding)
   layout.ts           ← drag-handle resizable three-column layout
   settings.ts         ← settings modal, history drawer, theme, import/export
   storage.ts          ← localStorage persistence layer
+  auth.ts             ← GitHub OAuth device flow + Copilot token management
+  server.ts           ← local Node.js server (static files + API proxy)
   index.html          ← HTML shell with all CSS
 /dist/                ← compiled output (esbuild bundle)
   index.html          ← copied from /built
-  app.js              ← bundled JS (IIFE)
-  app.js.map          ← source map
+  app.js              ← bundled client JS (IIFE)
+  server.js           ← bundled server JS (ESM, Node)
   blueprint.md        ← copied from /src for default loading
 package.json          ← dependencies: esbuild, typescript, marked
 tsconfig.json         ← TypeScript config (target ES2020, bundler resolution)
@@ -51,9 +53,10 @@ The application is a single-page web UI composed of three primary regions:
 
 - **Frontend**: TypeScript compiled via esbuild into a single IIFE bundle, no framework dependencies.
 - **Markdown Engine**: `marked` (npm) for rendering and structural analysis.
-- **Compilation Backend**: Copilot SDK / OpenAI-compatible chat completions endpoint, invoked client-side with streaming, translating authored markdown into application source code.
+- **Compilation Backend**: GitHub Copilot chat completions API, accessed via the user's GitHub account and Copilot subscription. A local Node.js server proxies API requests to avoid CORS restrictions.
 - **Runtime Sandbox**: An iframe with `srcdoc` and `sandbox="allow-scripts allow-modals"` for rendering and executing compiled output in isolation.
-- **Build Tooling**: esbuild for bundling, TypeScript for type checking. Single `node build.mjs` produces `/dist`.
+- **Build Tooling**: esbuild for bundling (client IIFE + server ESM), TypeScript for type checking. Single `node build.mjs` produces `/dist`.
+- **Local Server**: A Node.js HTTP server (`server.ts`) that serves static files from `/dist` and proxies API calls to GitHub and the Copilot API.
 
 ## Editor Panel
 
@@ -97,12 +100,41 @@ The compilation panel orchestrates transformation of the authored markdown into 
 
 ### Copilot SDK Integration
 
-- Uses any OpenAI-compatible chat completions endpoint (configurable in settings).
+- Authentication via GitHub OAuth device flow (no API keys needed).
+- Users sign in with their GitHub account; the app obtains a Copilot token using their subscription.
+- The local server proxies requests to `https://api.githubcopilot.com/chat/completions`.
 - Model selection input field (default: `gpt-4o`).
 - Temperature slider (default: 0) for controlling output determinism.
 - Max token limit input (default: 16000).
-- An API key input field, stored in `localStorage` (with a warning label about client-side storage).
 - Streaming via `ReadableStream` reader, parsing SSE `data:` lines in real time.
+
+## Authentication
+
+The application uses the GitHub OAuth device flow to authenticate users and access their Copilot subscription.
+
+### Device Flow
+
+1. User clicks "Sign in with GitHub" in the toolbar or settings.
+2. The app requests a device code from GitHub via the local proxy (`/api/auth/device-code`).
+3. A one-time code is displayed; the user copies it and opens GitHub's verification page.
+4. The app polls for authorization (`/api/auth/token`) until the user completes sign-in.
+5. On success, the GitHub access token is stored in `localStorage`.
+
+### Copilot Token
+
+- After GitHub sign-in, the app fetches a Copilot API token from `https://api.github.com/copilot_internal/v2/token` (proxied through `/api/copilot/token`).
+- The Copilot token is cached in `localStorage` and refreshed when it nears expiration.
+- All compilation requests use this token to authenticate with the Copilot chat completions endpoint.
+
+### Server Proxy Routes
+
+The local Node.js server (`server.ts`) provides these proxy endpoints to avoid CORS issues:
+
+- `POST /api/auth/device-code` → `https://github.com/login/device/code`
+- `POST /api/auth/token` → `https://github.com/login/oauth/access_token`
+- `GET /api/github/user` → `https://api.github.com/user`
+- `GET /api/copilot/token` → `https://api.github.com/copilot_internal/v2/token`
+- `POST /api/copilot/chat` → `https://api.githubcopilot.com/chat/completions` (streaming)
 
 ## Preview Panel
 
@@ -129,9 +161,10 @@ The preview panel renders the compiled output as a live, interactive application
 
 Accessible via gear icon in the toolbar:
 
+- GitHub account sign-in / sign-out.
 - Theme toggle (light / dark).
 - Font size adjustment for the editor.
-- Copilot SDK configuration (API key, model, temperature, max tokens).
+- Model selection, temperature, and max token configuration.
 - Export full project state (markdown + compiled output + settings) as a JSON bundle.
 - Import project state from a JSON bundle.
 
@@ -152,10 +185,10 @@ The initial bootstrap version is the TypeScript implementation under `/built`, c
 
 ### Bootstrap Requirements
 
-- TypeScript source in `/built`, compiled with esbuild to a single IIFE bundle in `/dist/app.js`.
+- TypeScript source in `/built`, compiled with esbuild to a client IIFE bundle (`dist/app.js`) and a server ESM bundle (`dist/server.js`).
 - An `index.html` shell in `/built` with all CSS embedded, copied to `/dist` at build time.
 - `blueprint.md` copied from `/src` to `/dist` so the app can load it as default content.
-- Served via `npx http-server dist -p 8080 -c-1` (no caching).
+- Served via `node dist/server.js` on port 8080 (local HTTP server with API proxy).
 - No build-time framework dependencies beyond esbuild, typescript, and marked.
 
 This is sufficient to compile this document into the first real version of the tool.

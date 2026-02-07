@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "license": "SEE LICENSE IN LICENSE.txt",
   "private": true,
+  "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "serve": "npx http-server dist -p 8080 -c-1",
+    "serve": "node dist/server.js",
     "dev": "npm run build && npm run serve"
   },
   "devDependencies": {

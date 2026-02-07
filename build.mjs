@@ -10,7 +10,7 @@ import * as path from 'path';
 const distDir = path.resolve('dist');
 if (!fs.existsSync(distDir)) fs.mkdirSync(distDir, { recursive: true });
 
-// Bundle TypeScript
+// Bundle client TypeScript
 await esbuild.build({
   entryPoints: ['built/main.ts'],
   bundle: true,
@@ -19,6 +19,19 @@ await esbuild.build({
   sourcemap: true,
   target: 'es2020',
   minify: false,
+});
+
+// Bundle server TypeScript
+await esbuild.build({
+  entryPoints: ['built/server.ts'],
+  bundle: true,
+  outfile: 'dist/server.js',
+  format: 'esm',
+  platform: 'node',
+  target: 'node18',
+  sourcemap: true,
+  minify: false,
+  banner: { js: '// @ts-nocheck' },
 });
 
 // Copy HTML

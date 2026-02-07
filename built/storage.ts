@@ -13,8 +13,6 @@ export interface ProjectState {
 }
 
 export interface AppSettings {
-  apiKey: string;
-  endpoint: string;
   model: string;
   temperature: number;
   maxTokens: number;
@@ -29,8 +27,6 @@ export interface CompilationEntry {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  apiKey: '',
-  endpoint: 'https://api.openai.com/v1/chat/completions',
   model: 'gpt-4o',
   temperature: 0,
   maxTokens: 16000,

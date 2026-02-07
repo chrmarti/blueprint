@@ -7,8 +7,9 @@ import { initEditor, setContent, getContent, setFontSize } from './editor';
 import { initCompiler, compile, setOutput, getOutput } from './compiler';
 import { initPreview, loadPreview } from './preview';
 import { initLayout } from './layout';
-import { initSettings, applyTheme } from './settings';
+import { initSettings, applyTheme, updateAuthUI } from './settings';
 import { loadMarkdown, saveMarkdown, loadOutput, loadSettings, saveSettings } from './storage';
+import { initAuth } from './auth';
 
 async function boot(): Promise<void> {
   // Initialize all modules
@@ -23,6 +24,11 @@ async function boot(): Promise<void> {
   initPreview();
   initLayout();
   initSettings();
+
+  // Initialize GitHub auth
+  initAuth({
+    onAuthChange: (user) => updateAuthUI(user),
+  });
 
   // Apply saved settings
   const settings = loadSettings();

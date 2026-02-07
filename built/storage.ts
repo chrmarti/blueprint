@@ -27,7 +27,7 @@ export interface CompilationEntry {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  model: 'gpt-4o',
+  model: 'claude-opus-4.6',
   temperature: 0,
   maxTokens: 16000,
   fontSize: 14,

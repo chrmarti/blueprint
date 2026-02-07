@@ -103,7 +103,8 @@ The compilation panel orchestrates transformation of the authored markdown into 
 - Authentication via GitHub OAuth device flow (no API keys needed).
 - Users sign in with their GitHub account; the app obtains a Copilot token using their subscription.
 - The local server proxies requests to `https://api.githubcopilot.com/chat/completions`.
-- Model selection input field (default: `gpt-4o`).
+- Model selection dropdown, dynamically populated from the Copilot API's available models list (default: `claude-opus-4.6`).
+- Max token limit is auto-filled from the selected model's `capabilities.limits.max_output_tokens` metadata.
 - Temperature slider (default: 0) for controlling output determinism.
 - Max token limit input (default: 16000).
 - Streaming via `ReadableStream` reader, parsing SSE `data:` lines in real time.
@@ -134,6 +135,7 @@ The local Node.js server (`server.ts`) provides these proxy endpoints to avoid C
 - `POST /api/auth/token` → `https://github.com/login/oauth/access_token`
 - `GET /api/github/user` → `https://api.github.com/user`
 - `GET /api/copilot/token` → `https://api.github.com/copilot_internal/v2/token`
+- `GET /api/copilot/models` → `https://api.githubcopilot.com/models`
 - `POST /api/copilot/chat` → `https://api.githubcopilot.com/chat/completions` (streaming)
 
 ## Preview Panel
@@ -164,7 +166,7 @@ Accessible via gear icon in the toolbar:
 - GitHub account sign-in / sign-out.
 - Theme toggle (light / dark).
 - Font size adjustment for the editor.
-- Model selection, temperature, and max token configuration.
+- Model selection dropdown (populated from Copilot API), temperature, and max token configuration.
 - Export full project state (markdown + compiled output + settings) as a JSON bundle.
 - Import project state from a JSON bundle.
 

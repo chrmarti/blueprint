@@ -7,7 +7,7 @@ import { loadSettings, saveSettings, loadHistory, exportProject, importProject }
 import type { CompilationEntry } from './storage';
 import { setOutput } from './compiler';
 import { loadPreview } from './preview';
-import { startSignIn, signOut, isSignedIn, getUser, type GitHubUser } from './auth';
+import { startSignIn, signOut, isSignedIn, getUser, getCopilotToken, type GitHubUser } from './auth';
 
 let modalEl: HTMLElement;
 let historyDrawerEl: HTMLElement;
@@ -92,17 +92,107 @@ function closeModal(): void {
 
 function populateForm(): void {
   const s = loadSettings();
-  (document.getElementById('setting-model') as HTMLInputElement).value = s.model;
+  const modelSelect = document.getElementById('setting-model') as HTMLSelectElement;
+  // Set current value; if models are loaded, it'll match; otherwise keep as-is
+  if (modelSelect.querySelector(`option[value="${s.model}"]`)) {
+    modelSelect.value = s.model;
+  }
   (document.getElementById('setting-temp') as HTMLInputElement).value = String(s.temperature);
   (document.getElementById('temp-display') as HTMLSpanElement).textContent = String(s.temperature);
   (document.getElementById('setting-max-tokens') as HTMLInputElement).value = String(s.maxTokens);
   (document.getElementById('setting-font-size') as HTMLInputElement).value = String(s.fontSize);
   updateAuthUI(getUser());
+
+  // Fetch models if signed in
+  if (isSignedIn()) {
+    loadModels();
+  }
+}
+
+interface ModelInfo {
+  id: string;
+  name?: string;
+  version?: string;
+  model_picker_enabled?: boolean;
+  capabilities?: {
+    type?: string;
+    family?: string;
+    limits?: {
+      max_prompt_tokens?: number;
+      max_output_tokens?: number;
+      max_context_window_tokens?: number;
+    };
+    supports?: {
+      streaming?: boolean;
+      tool_calls?: boolean;
+      vision?: boolean;
+      thinking?: boolean;
+    };
+  };
+  [key: string]: unknown;
+}
+
+let modelMetadata: ModelInfo[] = [];
+
+async function loadModels(): Promise<void> {
+  const modelSelect = document.getElementById('setting-model') as HTMLSelectElement;
+  const maxTokensInput = document.getElementById('setting-max-tokens') as HTMLInputElement;
+  const currentModel = loadSettings().model;
+
+  try {
+    const token = await getCopilotToken();
+    const res = await fetch('/api/copilot/models', {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!res.ok) return;
+
+    const data = await res.json();
+    const models: ModelInfo[] = data.data || data.models || data || [];
+    if (!Array.isArray(models) || models.length === 0) return;
+
+    modelMetadata = models;
+
+    modelSelect.innerHTML = '';
+    for (const m of models) {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.name || m.id;
+      if (m.id === currentModel) opt.selected = true;
+      modelSelect.appendChild(opt);
+    }
+
+    // If saved model wasn't in list, keep first selected
+    if (!modelSelect.value) {
+      modelSelect.value = models[0].id;
+    }
+
+    // Set max tokens from selected model metadata
+    applyModelMaxTokens(modelSelect.value, maxTokensInput);
+
+    // Update max tokens when model selection changes
+    modelSelect.addEventListener('change', () => {
+      applyModelMaxTokens(modelSelect.value, maxTokensInput);
+    });
+  } catch {
+    // silently keep existing options
+  }
+}
+
+function applyModelMaxTokens(modelId: string, maxTokensInput: HTMLInputElement): void {
+  const meta = modelMetadata.find(m => m.id === modelId);
+  const limit = meta?.capabilities?.limits?.max_output_tokens;
+  if (limit && limit > 0) {
+    maxTokensInput.value = String(limit);
+    maxTokensInput.max = String(limit);
+  } else {
+    // Fallback: no metadata available, leave current value
+    console.log(`[Blueprint Compiler] No max_output_tokens in metadata for ${modelId}`, meta?.capabilities);
+  }
 }
 
 function saveAndClose(): void {
   const s = loadSettings();
-  s.model = (document.getElementById('setting-model') as HTMLInputElement).value;
+  s.model = (document.getElementById('setting-model') as HTMLSelectElement).value;
   s.temperature = parseFloat((document.getElementById('setting-temp') as HTMLInputElement).value);
   s.maxTokens = parseInt((document.getElementById('setting-max-tokens') as HTMLInputElement).value, 10);
   s.fontSize = parseInt((document.getElementById('setting-font-size') as HTMLInputElement).value, 10);

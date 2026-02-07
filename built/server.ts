@@ -124,6 +124,19 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === '/api/copilot/models' && req.method === 'GET') {
+      proxyRequest('GET', 'https://api.githubcopilot.com/models', {
+        'Authorization': req.headers['authorization'] || '',
+        'Accept': 'application/json',
+        'Editor-Version': 'Blueprint-Compiler/0.1.0',
+        'Editor-Plugin-Version': 'blueprint-compiler/0.1.0',
+        'User-Agent': 'Blueprint-Compiler/0.1.0',
+        'Openai-Organization': 'github-copilot',
+        'Copilot-Integration-Id': 'vscode-chat',
+      }, null, res);
+      return;
+    }
+
     if (url.pathname === '/api/copilot/chat' && req.method === 'POST') {
       proxyRequest('POST', 'https://api.githubcopilot.com/chat/completions', {
         'Authorization': req.headers['authorization'] || '',

@@ -5,11 +5,39 @@
 
 # Blueprint Compiler
 
+<!-- This document is the canonical definition of the application. The TypeScript
+     implementation lives under /built, compiles to /dist, and is served from a
+     local HTTP server. Keep this file in /src up to date whenever the
+     implementation changes. -->
+
 A web-based authoring environment for writing structured markdown blueprints and compiling them into executable applications using the Copilot SDK.
 
 ## Overview
 
 Blueprint Compiler is a self-hosting tool: a markdown document describes an application, and the tool transforms that description into working code. The tool itself is defined by the document you are reading now, and will be compiled by an early bootstrap version of itself until it can produce its own runtime.
+
+## Project Structure
+
+```
+/src/blueprint.md     ← this document (canonical definition)
+/built/               ← TypeScript source
+  main.ts             ← entry point, boots all modules
+  editor.ts           ← editor panel (textarea, outline, markdown preview)
+  compiler.ts         ← compilation panel (Copilot SDK streaming call)
+  preview.ts          ← preview panel (iframe sandbox, console forwarding)
+  layout.ts           ← drag-handle resizable three-column layout
+  settings.ts         ← settings modal, history drawer, theme, import/export
+  storage.ts          ← localStorage persistence layer
+  index.html          ← HTML shell with all CSS
+/dist/                ← compiled output (esbuild bundle)
+  index.html          ← copied from /built
+  app.js              ← bundled JS (IIFE)
+  app.js.map          ← source map
+  blueprint.md        ← copied from /src for default loading
+package.json          ← dependencies: esbuild, typescript, marked
+tsconfig.json         ← TypeScript config (target ES2020, bundler resolution)
+build.mjs             ← build script: esbuild bundle + file copy
+```
 
 ## Architecture
 
@@ -21,10 +49,11 @@ The application is a single-page web UI composed of three primary regions:
 
 ### Technology Stack
 
-- **Frontend**: Vanilla HTML, CSS, and JavaScript (no framework dependencies during bootstrap phase).
-- **Markdown Engine**: A lightweight markdown parser (e.g., marked) for rendering and structural analysis.
-- **Compilation Backend**: Copilot SDK, invoked client-side, translating authored markdown into application source code.
-- **Runtime Sandbox**: An iframe with `srcdoc` for rendering and executing compiled output in isolation.
+- **Frontend**: TypeScript compiled via esbuild into a single IIFE bundle, no framework dependencies.
+- **Markdown Engine**: `marked` (npm) for rendering and structural analysis.
+- **Compilation Backend**: Copilot SDK / OpenAI-compatible chat completions endpoint, invoked client-side with streaming, translating authored markdown into application source code.
+- **Runtime Sandbox**: An iframe with `srcdoc` and `sandbox="allow-scripts allow-modals"` for rendering and executing compiled output in isolation.
+- **Build Tooling**: esbuild for bundling, TypeScript for type checking. Single `node build.mjs` produces `/dist`.
 
 ## Editor Panel
 
@@ -68,11 +97,12 @@ The compilation panel orchestrates transformation of the authored markdown into 
 
 ### Copilot SDK Integration
 
-- Use `@anthropic-ai/sdk` or the Copilot extensibility SDK depending on the runtime environment.
-- Model selection dropdown (default: the most capable available model).
+- Uses any OpenAI-compatible chat completions endpoint (configurable in settings).
+- Model selection input field (default: `gpt-4o`).
 - Temperature slider (default: 0) for controlling output determinism.
 - Max token limit input (default: 16000).
 - An API key input field, stored in `localStorage` (with a warning label about client-side storage).
+- Streaming via `ReadableStream` reader, parsing SSE `data:` lines in real time.
 
 ## Preview Panel
 
@@ -81,10 +111,11 @@ The preview panel renders the compiled output as a live, interactive application
 ### Requirements
 
 - An iframe with `srcdoc` set to the compiled HTML output.
+- Console forwarding script injected into `<head>`: intercepts `console.log`, `console.warn`, `console.error` and forwards via `parent.postMessage`.
 - A **Refresh** button to re-inject the latest compiled output.
 - A toggle to open the preview in a new browser tab.
-- Console output forwarding: `console.log`, `console.warn`, and `console.error` messages from the iframe are captured and displayed in a collapsible log viewer below the preview.
-- A dimension control to simulate common viewport sizes (mobile, tablet, desktop).
+- Console messages displayed in a collapsible log viewer below the preview, color-coded by level.
+- A dimension control to simulate common viewport sizes (mobile 375px, tablet 768px, desktop 100%).
 
 ## Layout and Interaction
 
@@ -117,15 +148,14 @@ At convergence, the tool is fully self-hosting: it is both the product and the f
 
 ## Bootstrap Implementation
 
-The initial bootstrap version is the minimal viable subset needed to begin the self-hosting loop.
+The initial bootstrap version is the TypeScript implementation under `/built`, compiled to `/dist` via `node build.mjs`.
 
 ### Bootstrap Requirements
 
-- A single `index.html` file, no build step.
-- A `<textarea>` for editing markdown.
-- A button that sends the textarea content to the Copilot SDK with the system prompt defined above.
-- A `<pre>` block that streams the SDK response.
-- A button to inject the response into an iframe as `srcdoc`.
-- Basic CSS for side-by-side layout of textarea, output, and iframe.
+- TypeScript source in `/built`, compiled with esbuild to a single IIFE bundle in `/dist/app.js`.
+- An `index.html` shell in `/built` with all CSS embedded, copied to `/dist` at build time.
+- `blueprint.md` copied from `/src` to `/dist` so the app can load it as default content.
+- Served via `npx http-server dist -p 8080 -c-1` (no caching).
+- No build-time framework dependencies beyond esbuild, typescript, and marked.
 
 This is sufficient to compile this document into the first real version of the tool.

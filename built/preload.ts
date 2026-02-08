@@ -22,13 +22,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   githubUser: (token: string) => ipcRenderer.invoke('api:githubUser', token),
   copilotToken: (ghToken: string) => ipcRenderer.invoke('api:copilotToken', ghToken),
   copilotModels: (copilotToken: string) => ipcRenderer.invoke('api:copilotModels', copilotToken),
-  chatStream: (copilotToken: string, body: string) =>
-    ipcRenderer.invoke('api:chatStream', copilotToken, body),
-  onChatChunk: (callback: (chunk: string) => void) => {
-    ipcRenderer.on('api:chatChunk', (_event, chunk: string) => callback(chunk));
+  // Copilot SDK
+  copilotInit: (githubToken: string) => ipcRenderer.invoke('copilot:init', githubToken),
+  copilotCompile: (opts: { model: string; systemPrompt: string; userPrompt: string }) =>
+    ipcRenderer.invoke('copilot:compile', opts),
+  copilotStop: () => ipcRenderer.invoke('copilot:stop'),
+  onCopilotChunk: (callback: (delta: string) => void) => {
+    ipcRenderer.on('copilot:chunk', (_event, delta: string) => callback(delta));
   },
-  removeChatChunkListeners: () => {
-    ipcRenderer.removeAllListeners('api:chatChunk');
+  removeCopilotChunkListeners: () => {
+    ipcRenderer.removeAllListeners('copilot:chunk');
   },
 
   // Window events

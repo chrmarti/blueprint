@@ -7,9 +7,11 @@ import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import https from 'node:https';
+import type { CopilotClient as CopilotClientType, AssistantMessageEvent } from '@github/copilot-sdk';
 
 let mainWindow: BrowserWindow | null = null;
 let workspaceFolder: string | null = null;
+let copilotClient: CopilotClientType | null = null;
 
 // ── HTTPS request helper ────────────────────────────────────────────
 
@@ -45,39 +47,6 @@ function httpsRequest(
     );
     req.on('error', reject);
     if (body) req.write(body);
-    req.end();
-  });
-}
-
-function httpsStream(
-  targetUrl: string,
-  headers: Record<string, string>,
-  body: string,
-  onChunk: (chunk: string) => void,
-): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(targetUrl);
-    const reqHeaders: Record<string, string> = {
-      ...headers,
-      'Content-Length': Buffer.byteLength(body).toString(),
-    };
-
-    const req = https.request(
-      {
-        hostname: parsed.hostname,
-        port: 443,
-        path: parsed.pathname + parsed.search,
-        method: 'POST',
-        headers: reqHeaders,
-      },
-      (res) => {
-        res.setEncoding('utf-8');
-        res.on('data', (chunk: string) => onChunk(chunk));
-        res.on('end', () => resolve(res.statusCode || 200));
-      },
-    );
-    req.on('error', reject);
-    req.write(body);
     req.end();
   });
 }
@@ -187,25 +156,60 @@ function setupIPC(): void {
     }, null);
   });
 
-  // Streaming chat completions — chunks are pushed via webContents.send
-  ipcMain.handle('api:chatStream', async (_event, copilotToken: string, body: string) => {
+  // ── Copilot SDK ─────────────────────────────────────────────────
+
+  ipcMain.handle('copilot:init', async (_event, githubToken: string) => {
     try {
-      const status = await httpsStream(
-        'https://api.githubcopilot.com/chat/completions',
-        {
-          'Authorization': `Bearer ${copilotToken}`,
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream',
-          ...COPILOT_HEADERS,
-        },
-        body,
-        (chunk) => {
-          mainWindow?.webContents.send('api:chatChunk', chunk);
-        },
-      );
-      return { status };
+      if (copilotClient) {
+        await copilotClient.stop().catch(() => {});
+        copilotClient = null;
+      }
+      const { CopilotClient } = await import('@github/copilot-sdk');
+      const cliPath = path.join(app.getAppPath(), 'node_modules', '.bin', 'copilot');
+      copilotClient = new CopilotClient({
+        cliPath,
+        githubToken,
+        useLoggedInUser: false,
+      });
+      await copilotClient.start();
+      return { ok: true };
     } catch (err) {
-      return { status: 502, error: (err as Error).message };
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('copilot:compile', async (_event, opts: {
+    model: string;
+    systemPrompt: string;
+    userPrompt: string;
+  }) => {
+    if (!copilotClient) {
+      return { ok: false, error: 'Copilot SDK not initialized. Please sign in.' };
+    }
+    try {
+      const session = await copilotClient.createSession({
+        model: opts.model,
+        streaming: true,
+        systemMessage: {
+          mode: 'replace',
+          content: opts.systemPrompt,
+        },
+      });
+      session.on('assistant.message_delta', (event: { data: { deltaContent: string } }) => {
+        mainWindow?.webContents.send('copilot:chunk', event.data.deltaContent);
+      });
+      const response = await session.sendAndWait({ prompt: opts.userPrompt });
+      await session.destroy();
+      return { ok: true, content: response?.data?.content || '' };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('copilot:stop', async () => {
+    if (copilotClient) {
+      await copilotClient.stop().catch(() => {});
+      copilotClient = null;
     }
   });
 }
@@ -324,6 +328,7 @@ async function main(): Promise<void> {
 }
 
 app.on('window-all-closed', () => {
+  if (copilotClient) copilotClient.stop().catch(() => {});
   if (process.platform !== 'darwin') app.quit();
 });
 

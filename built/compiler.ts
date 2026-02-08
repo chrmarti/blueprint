@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { loadSettings, saveOutput, pushHistory } from './storage';
-import { getCopilotToken, isSignedIn } from './auth';
+import { isSignedIn } from './auth';
 import { refreshTree } from './files';
 
 const SYSTEM_PROMPT = `You are a code generator. Given a structured markdown document describing an application, produce a complete, self-contained HTML file with embedded CSS and JavaScript that implements every requirement described. Output only the HTML file content, no explanation.`;
@@ -43,53 +43,31 @@ export async function compile(markdown: string): Promise<void> {
   }
 
   try {
-    const copilotToken = await getCopilotToken();
-
-    const body = JSON.stringify({
-      model: settings.model,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: markdown },
-      ],
-      temperature: settings.temperature,
-      max_tokens: settings.maxTokens,
-      stream: true,
-    });
-
-    // Listen for streaming chunks from the main process
+    // Listen for streaming chunks from the Copilot SDK
     let accumulated = '';
-    window.electronAPI.removeChatChunkListeners();
-    window.electronAPI.onChatChunk((chunk: string) => {
-      const lines = chunk.split('\n');
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6).trim();
-        if (data === '[DONE]') continue;
-
-        try {
-          const parsed = JSON.parse(data);
-          const delta = parsed.choices?.[0]?.delta?.content;
-          if (delta) {
-            accumulated += delta;
-            outputEl.value = accumulated;
-            outputEl.scrollTop = outputEl.scrollHeight;
-          }
-        } catch {
-          // skip malformed chunks
-        }
-      }
+    window.electronAPI.removeCopilotChunkListeners();
+    window.electronAPI.onCopilotChunk((delta: string) => {
+      accumulated += delta;
+      outputEl.value = accumulated;
+      outputEl.scrollTop = outputEl.scrollHeight;
     });
 
-    const result = await window.electronAPI.chatStream(copilotToken, body);
-    window.electronAPI.removeChatChunkListeners();
+    const result = await window.electronAPI.copilotCompile({
+      model: settings.model,
+      systemPrompt: SYSTEM_PROMPT,
+      userPrompt: markdown,
+    });
+    window.electronAPI.removeCopilotChunkListeners();
 
-    if (result.status >= 400) {
-      setStatus('error', `API error ${result.status}: ${result.error || 'Unknown error'}`);
+    if (!result.ok) {
+      setStatus('error', `Compilation failed: ${result.error || 'Unknown error'}`);
       return;
     }
 
+    // Use accumulated streaming content (or final content from SDK)
+    const raw = accumulated || result.content || '';
     // Strip markdown code fences if the model wrapped output
-    const cleaned = stripCodeFences(accumulated);
+    const cleaned = stripCodeFences(raw);
     outputEl.value = cleaned;
 
     saveOutput(cleaned);

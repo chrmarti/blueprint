@@ -31,9 +31,12 @@ interface ElectronAPI {
   githubUser(token: string): Promise<ApiResponse>;
   copilotToken(ghToken: string): Promise<ApiResponse>;
   copilotModels(copilotToken: string): Promise<ApiResponse>;
-  chatStream(copilotToken: string, body: string): Promise<{ status: number; error?: string }>;
-  onChatChunk(callback: (chunk: string) => void): void;
-  removeChatChunkListeners(): void;
+  // Copilot SDK
+  copilotInit(githubToken: string): Promise<{ ok: boolean; error?: string }>;
+  copilotCompile(opts: { model: string; systemPrompt: string; userPrompt: string }): Promise<{ ok: boolean; content?: string; error?: string }>;
+  copilotStop(): Promise<void>;
+  onCopilotChunk(callback: (delta: string) => void): void;
+  removeCopilotChunkListeners(): void;
 
   // Window events
   onFolderOpened(callback: (folder: string) => void): void;

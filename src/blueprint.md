@@ -40,7 +40,7 @@ Blueprint Compiler is a self-hosting tool: a markdown document describes an appl
   electron.cjs        ← bundled Electron main process (CJS)
   preload.cjs         ← bundled preload script (CJS)
   blueprint.md        ← copied from /src for reference
-package.json          ← dependencies: electron, esbuild, typescript, marked
+package.json          ← dependencies: electron, esbuild, typescript, marked, @github/copilot-sdk, @github/copilot
 tsconfig.json         ← TypeScript config (target ES2020, bundler resolution)
 build.mjs             ← build script: esbuild bundles + file copy
 ```
@@ -58,7 +58,7 @@ The application is an Electron desktop app composed of three primary regions in 
 - **Desktop Runtime**: Electron (main process, preload, renderer).
 - **Frontend**: TypeScript compiled via esbuild into a single IIFE bundle, no framework dependencies.
 - **Markdown Engine**: `marked` (npm) for rendering and structural analysis.
-- **Compilation Backend**: GitHub Copilot chat completions API, accessed via the user's GitHub account and Copilot subscription. The Electron main process makes HTTPS requests directly (no HTTP server needed) and communicates with the renderer via IPC.
+- **Compilation Backend**: GitHub Copilot SDK (`@github/copilot-sdk`), which communicates with the Copilot CLI (`@github/copilot`) via JSON-RPC. The SDK handles authentication, model selection, and streaming chat completions. The Electron main process manages the SDK client lifecycle and relays streaming chunks to the renderer via IPC.
 - **File System**: Electron IPC (`ipcMain.handle` / `ipcRenderer.invoke`) for reading directories, reading files, writing files, and showing native dialogs.
 - **Runtime Sandbox**: An iframe with `srcdoc` and `sandbox="allow-scripts allow-modals"` for rendering and executing compiled output in isolation.
 - **Build Tooling**: esbuild for bundling (renderer IIFE + main CJS + preload CJS), TypeScript for type checking.
@@ -76,14 +76,21 @@ The Electron main process (`electron.ts`) handles:
 
 ### IPC-Based API Proxy
 
-All external API calls are made from the main process via Node.js `https` module, eliminating the need for an HTTP server. The renderer communicates with the main process through IPC:
+Authentication API calls (GitHub OAuth device flow) are made from the main process via Node.js `https` module. Compilation is handled by the Copilot SDK. The renderer communicates with the main process through IPC:
 
 - `api:authDeviceCode(body)` → `POST https://github.com/login/device/code` — returns `{ status, body }`
 - `api:authToken(body)` → `POST https://github.com/login/oauth/access_token` — returns `{ status, body }`
 - `api:githubUser(token)` → `GET https://api.github.com/user` — returns `{ status, body }`
 - `api:copilotToken(ghToken)` → `GET https://api.github.com/copilot_internal/v2/token` — returns `{ status, body }`
 - `api:copilotModels(copilotToken)` → `GET https://api.githubcopilot.com/models` — returns `{ status, body }`
-- `api:chatStream(copilotToken, body)` → `POST https://api.githubcopilot.com/chat/completions` — streaming: chunks are pushed to renderer via `webContents.send('api:chatChunk', chunk)`, returns `{ status }` on completion
+
+### Copilot SDK IPC
+
+The Copilot SDK runs in the main process and manages the CLI lifecycle:
+
+- `copilot:init(githubToken)` — Starts the Copilot CLI via the SDK, passing the user's GitHub token for authentication. Returns `{ ok, error? }`.
+- `copilot:compile({ model, systemPrompt, userPrompt })` — Creates a streaming session, sends the prompt, and relays `assistant.message_delta` events to the renderer via `webContents.send('copilot:chunk', delta)`. Returns `{ ok, content?, error? }` on completion.
+- `copilot:stop` — Stops the Copilot CLI process.
 
 ### IPC Handlers
 
@@ -166,12 +173,11 @@ The compilation panel orchestrates transformation of the authored markdown into 
 ### Copilot SDK Integration
 
 - Authentication via GitHub OAuth device flow (no API keys needed).
-- Users sign in with their GitHub account; the app obtains a Copilot token using their subscription.
-- The main process makes HTTPS requests directly to `https://api.githubcopilot.com/chat/completions` via IPC.
+- Users sign in with their GitHub account; the GitHub token is passed to the Copilot SDK which handles Copilot authentication internally.
+- Compilation uses `@github/copilot-sdk`: the main process creates a `CopilotClient`, starts the Copilot CLI (`@github/copilot`), creates a streaming session with the selected model and system prompt, and relays `assistant.message_delta` chunks to the renderer via IPC.
 - Model selection dropdown, dynamically populated from the Copilot API's available models list (default: `claude-opus-4.6`).
 - Max token limit is auto-filled from the selected model's `capabilities.limits.max_output_tokens` metadata.
 - Temperature slider (default: 0) for controlling output determinism.
-- Streaming: the main process pushes SSE chunks to the renderer via IPC events.
 
 ## Authentication
 
@@ -193,7 +199,7 @@ The application uses the GitHub OAuth device flow to authenticate users and acce
 
 ### How It Works
 
-The renderer never makes network requests directly. All external API calls go through `window.electronAPI` methods, which invoke IPC handlers in the main process. The main process uses Node.js `https` to make the actual HTTPS requests and returns the response. For streaming chat completions, the main process pushes chunks to the renderer via `webContents.send` events.
+The renderer never makes network requests directly. Authentication API calls go through `window.electronAPI` IPC methods to the main process, which uses Node.js `https`. Compilation goes through the Copilot SDK: the renderer calls `window.electronAPI.copilotCompile()`, which triggers the main process to create a session via `CopilotClient`, stream `assistant.message_delta` events back to the renderer via `webContents.send('copilot:chunk')`, and return the final result.
 
 ## Preview Panel
 
@@ -248,7 +254,7 @@ The initial bootstrap version is the TypeScript implementation under `/built`, c
 - An `index.html` shell in `/built` with all CSS embedded, copied to `/dist` at build time.
 - `blueprint.md` copied from `/src` to `/dist` for reference.
 - Launched via `npm start` (runs `electron .`) which starts the Electron app.
-- The Electron main process makes HTTPS requests directly via IPC (no embedded HTTP server).
+- The Electron main process uses the Copilot SDK (`@github/copilot-sdk`) for compilation, which manages the Copilot CLI (`@github/copilot`) process automatically. Authentication IPC still uses Node.js `https` directly.
 - The renderer loads `index.html` directly from disk via `loadFile()`.
 - A folder can be passed on the command line: `npm start -- /path/to/folder`.
 - No build-time framework dependencies beyond electron, esbuild, typescript, and marked.

@@ -37,6 +37,10 @@ export function initAuth(opts: { onAuthChange: (user: GitHubUser | null) => void
       .then((user) => {
         currentUser = user;
         authChangeCallback(user);
+        // Initialize Copilot SDK with stored token
+        if (window.electronAPI) {
+          window.electronAPI.copilotInit(token).catch(() => {});
+        }
       })
       .catch(() => {
         clearTokens();
@@ -98,6 +102,10 @@ export async function startSignIn(
 
     if (tokenData.access_token) {
       localStorage.setItem(GH_TOKEN_KEY, tokenData.access_token);
+      // Initialize Copilot SDK with the new token
+      if (window.electronAPI) {
+        await window.electronAPI.copilotInit(tokenData.access_token).catch(() => {});
+      }
       onStatus('Fetching user info...');
 
       try {
@@ -126,6 +134,9 @@ export async function startSignIn(
 
 export function signOut(): void {
   clearTokens();
+  if (window.electronAPI) {
+    window.electronAPI.copilotStop().catch(() => {});
+  }
   authChangeCallback(null);
 }
 

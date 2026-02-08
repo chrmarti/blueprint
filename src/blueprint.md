@@ -21,7 +21,7 @@ Blueprint Compiler is a self-hosting tool: a markdown document describes an appl
 ```
 /src/blueprint.md     ← this document (canonical definition)
 /built/               ← TypeScript source
-  electron.ts         ← Electron main process (window, menu, IPC, embedded server)
+  electron.ts         ← Electron main process (window, menu, IPC, API proxy)
   preload.ts          ← preload script (contextBridge for IPC)
   main.ts             ← renderer entry point, boots all modules
   editor.ts           ← editor panel (textarea, outline, markdown preview)
@@ -58,7 +58,7 @@ The application is an Electron desktop app composed of three primary regions in 
 - **Desktop Runtime**: Electron (main process, preload, renderer).
 - **Frontend**: TypeScript compiled via esbuild into a single IIFE bundle, no framework dependencies.
 - **Markdown Engine**: `marked` (npm) for rendering and structural analysis.
-- **Compilation Backend**: GitHub Copilot chat completions API, accessed via the user's GitHub account and Copilot subscription. An embedded HTTP server in the Electron main process proxies API requests.
+- **Compilation Backend**: GitHub Copilot chat completions API, accessed via the user's GitHub account and Copilot subscription. The Electron main process makes HTTPS requests directly (no HTTP server needed) and communicates with the renderer via IPC.
 - **File System**: Electron IPC (`ipcMain.handle` / `ipcRenderer.invoke`) for reading directories, reading files, writing files, and showing native dialogs.
 - **Runtime Sandbox**: An iframe with `srcdoc` and `sandbox="allow-scripts allow-modals"` for rendering and executing compiled output in isolation.
 - **Build Tooling**: esbuild for bundling (renderer IIFE + main CJS + preload CJS), TypeScript for type checking.
@@ -69,17 +69,21 @@ The Electron main process (`electron.ts`) handles:
 
 ### Window Management
 
-- Creates a `BrowserWindow` (1400×900 default) loading the renderer from an embedded HTTP server.
+- Creates a `BrowserWindow` (1400×900 default) loading `index.html` directly from disk via `loadFile()`.
 - Supports a folder path argument on the command line: `electron . /path/to/folder`.
 - Sets the window title to include the workspace folder name.
 - Application menu with File → Open Folder (Cmd+Shift+O), standard Edit and View menus.
 
-### Embedded HTTP Server
+### IPC-Based API Proxy
 
-- Starts an HTTP server on a random available port (`port 0`) bound to `127.0.0.1`.
-- Serves static files from the `/dist` directory (same as `__dirname`).
-- Proxies API routes to GitHub and Copilot (same routes as before — see Server Proxy Routes below).
-- The renderer loads from `http://127.0.0.1:<port>`, so all existing `fetch()` calls work unchanged.
+All external API calls are made from the main process via Node.js `https` module, eliminating the need for an HTTP server. The renderer communicates with the main process through IPC:
+
+- `api:authDeviceCode(body)` → `POST https://github.com/login/device/code` — returns `{ status, body }`
+- `api:authToken(body)` → `POST https://github.com/login/oauth/access_token` — returns `{ status, body }`
+- `api:githubUser(token)` → `GET https://api.github.com/user` — returns `{ status, body }`
+- `api:copilotToken(ghToken)` → `GET https://api.github.com/copilot_internal/v2/token` — returns `{ status, body }`
+- `api:copilotModels(copilotToken)` → `GET https://api.githubcopilot.com/models` — returns `{ status, body }`
+- `api:chatStream(copilotToken, body)` → `POST https://api.githubcopilot.com/chat/completions` — streaming: chunks are pushed to renderer via `webContents.send('api:chatChunk', chunk)`, returns `{ status }` on completion
 
 ### IPC Handlers
 
@@ -92,7 +96,7 @@ The Electron main process (`electron.ts`) handles:
 
 ### Preload Script
 
-The preload script (`preload.ts`) uses `contextBridge.exposeInMainWorld` to expose a safe `window.electronAPI` object with typed methods for all IPC operations.
+The preload script (`preload.ts`) uses `contextBridge.exposeInMainWorld` to expose a safe `window.electronAPI` object with typed methods for all IPC operations, including file system access and API proxy calls.
 
 ## File Browser
 
@@ -163,11 +167,11 @@ The compilation panel orchestrates transformation of the authored markdown into 
 
 - Authentication via GitHub OAuth device flow (no API keys needed).
 - Users sign in with their GitHub account; the app obtains a Copilot token using their subscription.
-- The embedded server proxies requests to `https://api.githubcopilot.com/chat/completions`.
+- The main process makes HTTPS requests directly to `https://api.githubcopilot.com/chat/completions` via IPC.
 - Model selection dropdown, dynamically populated from the Copilot API's available models list (default: `claude-opus-4.6`).
 - Max token limit is auto-filled from the selected model's `capabilities.limits.max_output_tokens` metadata.
 - Temperature slider (default: 0) for controlling output determinism.
-- Streaming via `ReadableStream` reader, parsing SSE `data:` lines in real time.
+- Streaming: the main process pushes SSE chunks to the renderer via IPC events.
 
 ## Authentication
 
@@ -176,27 +180,20 @@ The application uses the GitHub OAuth device flow to authenticate users and acce
 ### Device Flow
 
 1. User clicks "Sign in with GitHub" in the toolbar or settings.
-2. The app requests a device code from GitHub via the embedded proxy (`/api/auth/device-code`).
+2. The app requests a device code from GitHub via IPC (`api:authDeviceCode`).
 3. A one-time code is displayed; the user copies it and opens GitHub's verification page.
-4. The app polls for authorization (`/api/auth/token`) until the user completes sign-in.
+4. The app polls for authorization (`api:authToken`) until the user completes sign-in.
 5. On success, the GitHub access token is stored in `localStorage`.
 
 ### Copilot Token
 
-- After GitHub sign-in, the app fetches a Copilot API token from `https://api.github.com/copilot_internal/v2/token` (proxied through `/api/copilot/token`).
+- After GitHub sign-in, the app fetches a Copilot API token via IPC (`api:copilotToken`).
 - The Copilot token is cached in `localStorage` and refreshed when it nears expiration.
-- All compilation requests use this token to authenticate with the Copilot chat completions endpoint.
+- All compilation requests use this token to authenticate with the Copilot chat completions endpoint via IPC.
 
-### Server Proxy Routes
+### How It Works
 
-The embedded HTTP server provides these proxy endpoints:
-
-- `POST /api/auth/device-code` → `https://github.com/login/device/code`
-- `POST /api/auth/token` → `https://github.com/login/oauth/access_token`
-- `GET /api/github/user` → `https://api.github.com/user`
-- `GET /api/copilot/token` → `https://api.github.com/copilot_internal/v2/token`
-- `GET /api/copilot/models` → `https://api.githubcopilot.com/models`
-- `POST /api/copilot/chat` → `https://api.githubcopilot.com/chat/completions` (streaming)
+The renderer never makes network requests directly. All external API calls go through `window.electronAPI` methods, which invoke IPC handlers in the main process. The main process uses Node.js `https` to make the actual HTTPS requests and returns the response. For streaming chat completions, the main process pushes chunks to the renderer via `webContents.send` events.
 
 ## Preview Panel
 
@@ -251,8 +248,8 @@ The initial bootstrap version is the TypeScript implementation under `/built`, c
 - An `index.html` shell in `/built` with all CSS embedded, copied to `/dist` at build time.
 - `blueprint.md` copied from `/src` to `/dist` for reference.
 - Launched via `npm start` (runs `electron .`) which starts the Electron app.
-- The Electron main process starts an embedded HTTP server on a random port, serves static files from `/dist`, and proxies API calls.
-- The renderer loads from `http://127.0.0.1:<port>` inside the BrowserWindow.
+- The Electron main process makes HTTPS requests directly via IPC (no embedded HTTP server).
+- The renderer loads `index.html` directly from disk via `loadFile()`.
 - A folder can be passed on the command line: `npm start -- /path/to/folder`.
 - No build-time framework dependencies beyond electron, esbuild, typescript, and marked.
 

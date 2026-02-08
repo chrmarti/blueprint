@@ -6,192 +6,95 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import http from 'node:http';
 import https from 'node:https';
 
 let mainWindow: BrowserWindow | null = null;
 let workspaceFolder: string | null = null;
-let serverPort = 0;
 
-const DIST = __dirname;
+// ── HTTPS request helper ────────────────────────────────────────────
 
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.md': 'text/markdown; charset=utf-8',
-  '.map': 'application/json',
-  '.ico': 'image/x-icon',
-};
-
-// ── HTTP helpers ────────────────────────────────────────────────────
-
-function readBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => chunks.push(c));
-    req.on('end', () => resolve(Buffer.concat(chunks).toString()));
-    req.on('error', reject);
-  });
-}
-
-function proxyRequest(
+function httpsRequest(
   method: string,
   targetUrl: string,
   headers: Record<string, string>,
   body: string | null,
-  res: http.ServerResponse,
-  stream = false,
-): void {
-  const parsed = new URL(targetUrl);
-  const reqHeaders: Record<string, string> = { ...headers };
-  if (body) reqHeaders['Content-Length'] = Buffer.byteLength(body).toString();
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(targetUrl);
+    const reqHeaders: Record<string, string> = { ...headers };
+    if (body) reqHeaders['Content-Length'] = Buffer.byteLength(body).toString();
 
-  const proxyReq = https.request(
-    {
-      hostname: parsed.hostname,
-      port: 443,
-      path: parsed.pathname + parsed.search,
-      method,
-      headers: reqHeaders,
-    },
-    (proxyRes) => {
-      if (stream) {
-        res.writeHead(proxyRes.statusCode || 200, {
-          'Content-Type': proxyRes.headers['content-type'] || 'text/event-stream',
-          'Cache-Control': 'no-cache',
-        });
-        proxyRes.pipe(res);
-      } else {
+    const req = https.request(
+      {
+        hostname: parsed.hostname,
+        port: 443,
+        path: parsed.pathname + parsed.search,
+        method,
+        headers: reqHeaders,
+      },
+      (res) => {
         const chunks: Buffer[] = [];
-        proxyRes.on('data', (c: Buffer) => chunks.push(c));
-        proxyRes.on('end', () => {
-          res.writeHead(proxyRes.statusCode || 200, {
-            'Content-Type': 'application/json',
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          resolve({
+            status: res.statusCode || 200,
+            body: Buffer.concat(chunks).toString(),
           });
-          res.end(Buffer.concat(chunks).toString());
         });
-      }
-    },
-  );
-
-  proxyReq.on('error', (err) => {
-    if (!res.headersSent) {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-    }
-    res.end(JSON.stringify({ error: err.message }));
-  });
-
-  if (body) proxyReq.write(body);
-  proxyReq.end();
-}
-
-// ── Embedded HTTP server (static files + API proxy) ─────────────────
-
-function startServer(): Promise<number> {
-  return new Promise((resolve) => {
-    const server = http.createServer(async (req, res) => {
-      const url = new URL(req.url || '/', 'http://localhost');
-
-      // ── API proxy routes ────────────────────────────────────────
-      if (url.pathname.startsWith('/api/')) {
-        const body = req.method === 'POST' ? await readBody(req) : null;
-
-        if (url.pathname === '/api/auth/device-code' && req.method === 'POST') {
-          proxyRequest('POST', 'https://github.com/login/device/code', {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          }, body, res);
-          return;
-        }
-
-        if (url.pathname === '/api/auth/token' && req.method === 'POST') {
-          proxyRequest('POST', 'https://github.com/login/oauth/access_token', {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          }, body, res);
-          return;
-        }
-
-        if (url.pathname === '/api/github/user' && req.method === 'GET') {
-          proxyRequest('GET', 'https://api.github.com/user', {
-            'Authorization': req.headers['authorization'] || '',
-            'Accept': 'application/json',
-            'User-Agent': 'Blueprint-Compiler/0.1.0',
-          }, null, res);
-          return;
-        }
-
-        if (url.pathname === '/api/copilot/token' && req.method === 'GET') {
-          proxyRequest('GET', 'https://api.github.com/copilot_internal/v2/token', {
-            'Authorization': req.headers['authorization'] || '',
-            'Accept': 'application/json',
-            'User-Agent': 'Blueprint-Compiler/0.1.0',
-          }, null, res);
-          return;
-        }
-
-        if (url.pathname === '/api/copilot/models' && req.method === 'GET') {
-          proxyRequest('GET', 'https://api.githubcopilot.com/models', {
-            'Authorization': req.headers['authorization'] || '',
-            'Accept': 'application/json',
-            'Editor-Version': 'Blueprint-Compiler/0.1.0',
-            'Editor-Plugin-Version': 'blueprint-compiler/0.1.0',
-            'User-Agent': 'Blueprint-Compiler/0.1.0',
-            'Openai-Organization': 'github-copilot',
-            'Copilot-Integration-Id': 'vscode-chat',
-          }, null, res);
-          return;
-        }
-
-        if (url.pathname === '/api/copilot/chat' && req.method === 'POST') {
-          proxyRequest('POST', 'https://api.githubcopilot.com/chat/completions', {
-            'Authorization': req.headers['authorization'] || '',
-            'Content-Type': 'application/json',
-            'Accept': 'text/event-stream',
-            'Editor-Version': 'Blueprint-Compiler/0.1.0',
-            'Editor-Plugin-Version': 'blueprint-compiler/0.1.0',
-            'User-Agent': 'Blueprint-Compiler/0.1.0',
-            'Openai-Organization': 'github-copilot',
-            'Copilot-Integration-Id': 'vscode-chat',
-          }, body, res, true);
-          return;
-        }
-
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Unknown API route' }));
-        return;
-      }
-
-      // ── Static files ────────────────────────────────────────────
-      const filePath = path.join(DIST, url.pathname === '/' ? 'index.html' : url.pathname);
-      const ext = path.extname(filePath);
-
-      try {
-        const content = fs.readFileSync(filePath);
-        res.writeHead(200, {
-          'Content-Type': MIME[ext] || 'application/octet-stream',
-          'Cache-Control': 'no-cache',
-        });
-        res.end(content);
-      } catch {
-        res.writeHead(404);
-        res.end('Not found');
-      }
-    });
-
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address() as { port: number };
-      console.log(`Embedded server on port ${addr.port}`);
-      resolve(addr.port);
-    });
+      },
+    );
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
   });
 }
+
+function httpsStream(
+  targetUrl: string,
+  headers: Record<string, string>,
+  body: string,
+  onChunk: (chunk: string) => void,
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(targetUrl);
+    const reqHeaders: Record<string, string> = {
+      ...headers,
+      'Content-Length': Buffer.byteLength(body).toString(),
+    };
+
+    const req = https.request(
+      {
+        hostname: parsed.hostname,
+        port: 443,
+        path: parsed.pathname + parsed.search,
+        method: 'POST',
+        headers: reqHeaders,
+      },
+      (res) => {
+        res.setEncoding('utf-8');
+        res.on('data', (chunk: string) => onChunk(chunk));
+        res.on('end', () => resolve(res.statusCode || 200));
+      },
+    );
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+const COPILOT_HEADERS = {
+  'Editor-Version': 'Blueprint-Compiler/0.1.0',
+  'Editor-Plugin-Version': 'blueprint-compiler/0.1.0',
+  'User-Agent': 'Blueprint-Compiler/0.1.0',
+  'Openai-Organization': 'github-copilot',
+  'Copilot-Integration-Id': 'vscode-chat',
+};
 
 // ── IPC handlers ────────────────────────────────────────────────────
 
 function setupIPC(): void {
+  // ── File system ─────────────────────────────────────────────────
+
   ipcMain.handle('dialog:openFolder', async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
       properties: ['openDirectory'],
@@ -242,6 +145,68 @@ function setupIPC(): void {
       ],
     });
     return result.canceled ? null : result.filePath;
+  });
+
+  // ── API proxy (replaces the HTTP server) ────────────────────────
+
+  ipcMain.handle('api:authDeviceCode', async (_event, body: string) => {
+    return httpsRequest('POST', 'https://github.com/login/device/code', {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    }, body);
+  });
+
+  ipcMain.handle('api:authToken', async (_event, body: string) => {
+    return httpsRequest('POST', 'https://github.com/login/oauth/access_token', {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    }, body);
+  });
+
+  ipcMain.handle('api:githubUser', async (_event, token: string) => {
+    return httpsRequest('GET', 'https://api.github.com/user', {
+      'Authorization': `token ${token}`,
+      'Accept': 'application/json',
+      'User-Agent': 'Blueprint-Compiler/0.1.0',
+    }, null);
+  });
+
+  ipcMain.handle('api:copilotToken', async (_event, ghToken: string) => {
+    return httpsRequest('GET', 'https://api.github.com/copilot_internal/v2/token', {
+      'Authorization': `token ${ghToken}`,
+      'Accept': 'application/json',
+      'User-Agent': 'Blueprint-Compiler/0.1.0',
+    }, null);
+  });
+
+  ipcMain.handle('api:copilotModels', async (_event, copilotToken: string) => {
+    return httpsRequest('GET', 'https://api.githubcopilot.com/models', {
+      'Authorization': `Bearer ${copilotToken}`,
+      'Accept': 'application/json',
+      ...COPILOT_HEADERS,
+    }, null);
+  });
+
+  // Streaming chat completions — chunks are pushed via webContents.send
+  ipcMain.handle('api:chatStream', async (_event, copilotToken: string, body: string) => {
+    try {
+      const status = await httpsStream(
+        'https://api.githubcopilot.com/chat/completions',
+        {
+          'Authorization': `Bearer ${copilotToken}`,
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+          ...COPILOT_HEADERS,
+        },
+        body,
+        (chunk) => {
+          mainWindow?.webContents.send('api:chatChunk', chunk);
+        },
+      );
+      return { status };
+    } catch (err) {
+      return { status: 502, error: (err as Error).message };
+    }
   });
 }
 
@@ -324,7 +289,7 @@ function createWindow(): void {
     },
   });
 
-  mainWindow.loadURL(`http://127.0.0.1:${serverPort}`);
+  mainWindow.loadFile(path.join(__dirname, 'index.html'));
   mainWindow.on('closed', () => { mainWindow = null; });
 
   mainWindow.webContents.on('did-finish-load', () => {
@@ -349,7 +314,6 @@ async function main(): Promise<void> {
     }
   }
 
-  serverPort = await startServer();
   setupIPC();
   buildMenu();
   createWindow();

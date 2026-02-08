@@ -139,14 +139,14 @@ async function loadModels(): Promise<void> {
   const maxTokensInput = document.getElementById('setting-max-tokens') as HTMLInputElement;
   const currentModel = loadSettings().model;
 
+  if (!window.electronAPI) return;
+
   try {
     const token = await getCopilotToken();
-    const res = await fetch('/api/copilot/models', {
-      headers: { 'Authorization': `Bearer ${token}` },
-    });
-    if (!res.ok) return;
+    const res = await window.electronAPI.copilotModels(token);
+    if (res.status >= 400) return;
 
-    const data = await res.json();
+    const data = JSON.parse(res.body);
     const models: ModelInfo[] = data.data || data.models || data || [];
     if (!Array.isArray(models) || models.length === 0) return;
 

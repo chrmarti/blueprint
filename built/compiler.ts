@@ -37,49 +37,30 @@ export async function compile(markdown: string): Promise<void> {
   setStatus('info', 'Compiling...');
   outputEl.value = '';
 
+  if (!window.electronAPI) {
+    setStatus('error', 'Electron API not available');
+    return;
+  }
+
   try {
     const copilotToken = await getCopilotToken();
 
-    const response = await fetch('/api/copilot/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${copilotToken}`,
-      },
-      body: JSON.stringify({
-        model: settings.model,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: markdown },
-        ],
-        temperature: settings.temperature,
-        max_tokens: settings.maxTokens,
-        stream: true,
-      }),
+    const body = JSON.stringify({
+      model: settings.model,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: markdown },
+      ],
+      temperature: settings.temperature,
+      max_tokens: settings.maxTokens,
+      stream: true,
     });
 
-    if (!response.ok) {
-      const body = await response.text();
-      setStatus('error', `API error ${response.status}: ${body.slice(0, 200)}`);
-      return;
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      setStatus('error', 'No response stream');
-      return;
-    }
-
-    const decoder = new TextDecoder();
+    // Listen for streaming chunks from the main process
     let accumulated = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      const chunk = decoder.decode(value, { stream: true });
+    window.electronAPI.removeChatChunkListeners();
+    window.electronAPI.onChatChunk((chunk: string) => {
       const lines = chunk.split('\n');
-
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
         const data = line.slice(6).trim();
@@ -97,6 +78,14 @@ export async function compile(markdown: string): Promise<void> {
           // skip malformed chunks
         }
       }
+    });
+
+    const result = await window.electronAPI.chatStream(copilotToken, body);
+    window.electronAPI.removeChatChunkListeners();
+
+    if (result.status >= 400) {
+      setStatus('error', `API error ${result.status}: ${result.error || 'Unknown error'}`);
+      return;
     }
 
     // Strip markdown code fences if the model wrapped output

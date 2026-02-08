@@ -67,16 +67,15 @@ export async function startSignIn(
   onStatus: (msg: string) => void,
   onDeviceCode: (code: string, verificationUri: string) => void,
 ): Promise<void> {
+  if (!window.electronAPI) throw new Error('Electron API not available');
   onStatus('Requesting device code...');
 
-  const res = await fetch('/api/auth/device-code', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id: CLIENT_ID, scope: '' }),
-  });
+  const res = await window.electronAPI.authDeviceCode(
+    JSON.stringify({ client_id: CLIENT_ID, scope: '' }),
+  );
 
-  if (!res.ok) throw new Error('Failed to start device flow');
-  const data: DeviceCodeResponse = await res.json();
+  if (res.status >= 400) throw new Error('Failed to start device flow');
+  const data: DeviceCodeResponse = JSON.parse(res.body);
 
   onDeviceCode(data.user_code, data.verification_uri);
   onStatus('Waiting for authorization...');
@@ -87,17 +86,15 @@ export async function startSignIn(
   while (Date.now() < deadline) {
     await sleep(interval * 1000);
 
-    const tokenRes = await fetch('/api/auth/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const tokenRes = await window.electronAPI.authToken(
+      JSON.stringify({
         client_id: CLIENT_ID,
         device_code: data.device_code,
         grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
       }),
-    });
+    );
 
-    const tokenData = await tokenRes.json();
+    const tokenData = JSON.parse(tokenRes.body);
 
     if (tokenData.access_token) {
       localStorage.setItem(GH_TOKEN_KEY, tokenData.access_token);
@@ -145,14 +142,13 @@ export async function getCopilotToken(): Promise<string> {
     }
   }
 
+  if (!window.electronAPI) throw new Error('Electron API not available');
   const ghToken = getGitHubToken();
   if (!ghToken) throw new Error('Not signed in to GitHub');
 
-  const res = await fetch('/api/copilot/token', {
-    headers: { 'Authorization': `token ${ghToken}` },
-  });
+  const res = await window.electronAPI.copilotToken(ghToken);
 
-  if (!res.ok) {
+  if (res.status >= 400) {
     if (res.status === 401) {
       clearTokens();
       authChangeCallback(null);
@@ -161,17 +157,16 @@ export async function getCopilotToken(): Promise<string> {
     throw new Error('Failed to get Copilot token. Ensure you have an active Copilot subscription.');
   }
 
-  const data: CopilotTokenData = await res.json();
+  const data: CopilotTokenData = JSON.parse(res.body);
   localStorage.setItem(COPILOT_TOKEN_KEY, JSON.stringify(data));
   return data.token;
 }
 
 async function fetchUser(token: string): Promise<GitHubUser> {
-  const res = await fetch('/api/github/user', {
-    headers: { 'Authorization': `token ${token}` },
-  });
-  if (!res.ok) throw new Error('Failed to fetch user');
-  return res.json();
+  if (!window.electronAPI) throw new Error('Electron API not available');
+  const res = await window.electronAPI.githubUser(token);
+  if (res.status >= 400) throw new Error('Failed to fetch user');
+  return JSON.parse(res.body);
 }
 
 function sleep(ms: number): Promise<void> {

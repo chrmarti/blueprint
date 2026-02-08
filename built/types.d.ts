@@ -10,13 +10,32 @@ interface DirEntry {
   isDirectory: boolean;
 }
 
+interface ApiResponse {
+  status: number;
+  body: string;
+  error?: string;
+}
+
 interface ElectronAPI {
+  // File system
   openFolder(): Promise<string | null>;
   readDir(dirPath: string): Promise<DirEntry[]>;
   readFile(filePath: string): Promise<string>;
   writeFile(filePath: string, content: string): Promise<void>;
   getWorkspaceFolder(): Promise<string | null>;
   showSaveDialog(defaultName: string): Promise<string | null>;
+
+  // API proxy
+  authDeviceCode(body: string): Promise<ApiResponse>;
+  authToken(body: string): Promise<ApiResponse>;
+  githubUser(token: string): Promise<ApiResponse>;
+  copilotToken(ghToken: string): Promise<ApiResponse>;
+  copilotModels(copilotToken: string): Promise<ApiResponse>;
+  chatStream(copilotToken: string, body: string): Promise<{ status: number; error?: string }>;
+  onChatChunk(callback: (chunk: string) => void): void;
+  removeChatChunkListeners(): void;
+
+  // Window events
   onFolderOpened(callback: (folder: string) => void): void;
   onMenuOpenFolder(callback: () => void): void;
   platform: string;

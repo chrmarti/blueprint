@@ -22,6 +22,7 @@ interface ElectronAPI {
   readDir(dirPath: string): Promise<DirEntry[]>;
   readFile(filePath: string): Promise<string>;
   writeFile(filePath: string, content: string): Promise<void>;
+  deleteEntry(targetPath: string): Promise<void>;
   getWorkspaceFolder(): Promise<string | null>;
   showSaveDialog(defaultName: string): Promise<string | null>;
 

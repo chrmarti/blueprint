@@ -102,6 +102,15 @@ function setupIPC(): void {
     fs.writeFileSync(filePath, content, 'utf-8');
   });
 
+  ipcMain.handle('fs:delete', async (_event, targetPath: string) => {
+    const stat = fs.statSync(targetPath);
+    if (stat.isDirectory()) {
+      fs.rmSync(targetPath, { recursive: true, force: true });
+    } else {
+      fs.unlinkSync(targetPath);
+    }
+  });
+
   ipcMain.handle('dialog:saveFile', async (_event, defaultName: string) => {
     const result = await dialog.showSaveDialog(mainWindow!, {
       defaultPath: workspaceFolder
@@ -161,19 +170,23 @@ function setupIPC(): void {
   ipcMain.handle('copilot:init', async (_event, githubToken: string) => {
     try {
       if (copilotClient) {
+        console.log('[copilot] Stopping previous client...');
         await copilotClient.stop().catch(() => {});
         copilotClient = null;
       }
       const { CopilotClient } = await import('@github/copilot-sdk');
       const cliPath = path.join(app.getAppPath(), 'node_modules', '.bin', 'copilot');
+      console.log('[copilot] Starting CLI from:', cliPath);
       copilotClient = new CopilotClient({
         cliPath,
         githubToken,
         useLoggedInUser: false,
       });
       await copilotClient.start();
+      console.log('[copilot] Client started successfully');
       return { ok: true };
     } catch (err) {
+      console.error('[copilot] Init error:', (err as Error).message);
       return { ok: false, error: (err as Error).message };
     }
   });
@@ -187,6 +200,7 @@ function setupIPC(): void {
       return { ok: false, error: 'Copilot SDK not initialized. Please sign in.' };
     }
     try {
+      console.log(`[copilot] Creating session with model: ${opts.model}`);
       const session = await copilotClient.createSession({
         model: opts.model,
         streaming: true,
@@ -195,13 +209,65 @@ function setupIPC(): void {
           content: opts.systemPrompt,
         },
       });
+
+      // Log all session events (except deltas, which are too noisy)
+      session.on((event: { type: string; data?: any }) => {
+        switch (event.type) {
+          case 'session.start':
+            console.log(`[copilot] Session started (model: ${event.data?.selectedModel}, copilot: ${event.data?.copilotVersion})`);
+            break;
+          case 'session.info':
+            console.log(`[copilot] Info: ${event.data?.message}`);
+            break;
+          case 'session.error':
+            console.error(`[copilot] Session error: ${event.data?.message}`);
+            break;
+          case 'session.idle':
+            console.log('[copilot] Session idle');
+            break;
+          case 'assistant.turn_start':
+            console.log(`[copilot] Turn started: ${event.data?.turnId}`);
+            break;
+          case 'assistant.turn_end':
+            console.log(`[copilot] Turn ended: ${event.data?.turnId}`);
+            break;
+          case 'assistant.usage':
+            console.log(`[copilot] Usage — model: ${event.data?.model}, input: ${event.data?.inputTokens}, output: ${event.data?.outputTokens}, duration: ${event.data?.duration}ms`);
+            break;
+          case 'assistant.intent':
+            console.log(`[copilot] Intent: ${event.data?.intent}`);
+            break;
+          case 'tool.execution_start':
+            console.log(`[copilot] Tool start: ${event.data?.toolName} (${event.data?.toolCallId})`);
+            break;
+          case 'tool.execution_complete':
+            console.log(`[copilot] Tool complete: ${event.data?.toolCallId} (success: ${event.data?.success})`);
+            break;
+          case 'session.model_change':
+            console.log(`[copilot] Model change: ${event.data?.previousModel} → ${event.data?.newModel}`);
+            break;
+          case 'session.shutdown':
+            console.log(`[copilot] Shutdown — requests: ${event.data?.totalPremiumRequests}, api time: ${event.data?.totalApiDurationMs}ms`);
+            break;
+          case 'assistant.message_delta':
+            // too noisy to log
+            break;
+          default:
+            console.log(`[copilot] Event: ${event.type}`);
+        }
+      });
+
       session.on('assistant.message_delta', (event: { data: { deltaContent: string } }) => {
         mainWindow?.webContents.send('copilot:chunk', event.data.deltaContent);
       });
-      const response = await session.sendAndWait({ prompt: opts.userPrompt });
+      // Use a 10-minute timeout — large blueprints can take a while to compile
+      console.log('[copilot] Sending prompt, waiting for response (timeout: 600s)...');
+      const response = await session.sendAndWait({ prompt: opts.userPrompt }, 600_000);
+      console.log(`[copilot] Response received (${response?.data?.content?.length || 0} chars)`);
       await session.destroy();
       return { ok: true, content: response?.data?.content || '' };
     } catch (err) {
+      console.error('[copilot] Compile error:', (err as Error).message);
       return { ok: false, error: (err as Error).message };
     }
   });
@@ -315,6 +381,14 @@ async function main(): Promise<void> {
     const resolved = path.resolve(folderArg);
     if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
       workspaceFolder = resolved;
+    }
+  }
+
+  // Default workspace folder for development
+  if (!workspaceFolder) {
+    const defaultFolder = '/Users/chrmarti/Development/repos/pacman';
+    if (fs.existsSync(defaultFolder) && fs.statSync(defaultFolder).isDirectory()) {
+      workspaceFolder = defaultFolder;
     }
   }
 

@@ -160,6 +160,17 @@
       letter-spacing: 0.05em;
     }
     .sidebar-tabs button.active { border-bottom-color: var(--accent); color: var(--text); }
+    .sidebar-actions { margin-left: auto; display: flex; gap: 2px; align-items: center; }
+    .sidebar-actions button {
+      padding: 2px 6px;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 13px;
+      border-radius: 4px;
+    }
+    .sidebar-actions button:hover { background: var(--bg-elevated); color: var(--text); }
 
     /* File tree */
     #file-tree {
@@ -185,6 +196,19 @@
     .file-entry.directory { font-weight: 600; }
     .file-icon { flex-shrink: 0; width: 16px; text-align: center; font-size: 11px; }
     .file-name { overflow: hidden; text-overflow: ellipsis; }
+
+    /* Inline rename/create input */
+    .file-entry input.inline-input {
+      border: 1px solid var(--accent);
+      background: var(--bg-elevated);
+      color: var(--text);
+      font-size: 12px;
+      font-family: var(--font-sans);
+      outline: none;
+      padding: 1px 4px;
+      border-radius: 3px;
+      width: 100%;
+    }
 
     /* Outline sidebar */
     #outline {
@@ -477,6 +501,11 @@
           <div class="sidebar-tabs">
             <button class="active" id="sidebar-files">Files</button>
             <button id="sidebar-outline">Outline</button>
+            <span class="sidebar-actions">
+              <button id="new-file-btn" title="New File">&#128196;</button>
+              <button id="new-folder-btn" title="New Folder">&#128193;</button>
+              <button id="delete-btn" title="Delete">&#128465;</button>
+            </span>
           </div>
           <div id="file-tree"></div>
           <div id="outline" style="display: none;"></div>

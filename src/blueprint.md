@@ -89,8 +89,21 @@ Authentication API calls (GitHub OAuth device flow) are made from the main proce
 The Copilot SDK runs in the main process and manages the CLI lifecycle:
 
 - `copilot:init(githubToken)` — Starts the Copilot CLI via the SDK, passing the user's GitHub token for authentication. Returns `{ ok, error? }`.
-- `copilot:compile({ model, systemPrompt, userPrompt })` — Creates a streaming session, sends the prompt, and relays `assistant.message_delta` events to the renderer via `webContents.send('copilot:chunk', delta)`. Returns `{ ok, content?, error? }` on completion.
+- `copilot:compile({ model, systemPrompt, userPrompt })` — Creates a streaming session, sends the prompt, and relays `assistant.message_delta` events to the renderer via `webContents.send('copilot:chunk', delta)`. Uses a 10-minute timeout (600,000ms) for `sendAndWait()` since compiling full blueprints can take longer than the SDK's 60-second default. Returns `{ ok, content?, error? }` on completion.
 - `copilot:stop` — Stops the Copilot CLI process.
+
+### Logging
+
+All Copilot SDK activity is logged to the launch terminal (stdout/stderr) with a `[copilot]` prefix. A wildcard event listener on each session logs:
+
+- Client lifecycle: init, start, stop
+- Session events: `session.start`, `session.info`, `session.error`, `session.idle`, `session.model_change`, `session.shutdown`
+- Turn progress: `assistant.turn_start`, `assistant.turn_end`, `assistant.intent`
+- Tool calls: `tool.execution_start`, `tool.execution_complete`
+- Token usage: `assistant.usage` (model, input/output tokens, duration)
+- Final response size in characters
+
+`assistant.message_delta` events are excluded from logging (too noisy).
 
 ### IPC Handlers
 
@@ -99,6 +112,7 @@ The Copilot SDK runs in the main process and manages the CLI lifecycle:
 - `fs:readDir` — Lists directory entries (name, isDirectory), sorted directories-first, excluding dotfiles.
 - `fs:readFile` — Reads a file's UTF-8 content.
 - `fs:writeFile` — Writes UTF-8 content to a file (creates parent directories as needed).
+- `fs:delete` — Deletes a file or folder (recursive for directories).
 - `dialog:saveFile` — Opens a native save dialog, returns the chosen path.
 
 ### Preload Script
@@ -113,10 +127,20 @@ The editor panel's sidebar has two tabs: **Files** and **Outline**.
 
 - Displays a tree view of the workspace folder, populated via `electronAPI.readDir`.
 - Directories show expand/collapse arrows (▸/▾) and are sorted before files.
+- Clicking a directory both toggles its expanded state and selects it as the active directory (highlighted).
 - Files show type-appropriate icons (📝 .md, 🌐 .html, 📜 .ts/.js, etc.).
-- Clicking a file loads its content into the editor via `electronAPI.readFile`.
-- The active file is highlighted with the accent color.
+- Clicking a file loads its content into the editor via `electronAPI.readFile` and clears any directory selection.
+- The active file or selected directory is highlighted with the accent color.
+- Each tree entry stores its full path in a `data-path` attribute for positioning inline inputs.
 - The tree is re-rendered after saving compilation output to reflect new files.
+
+### Toolbar Actions
+
+The sidebar tab bar includes action buttons for file management:
+
+- **New File** (📄) — Creates a new file in the selected directory (or the current file's parent, or workspace root). Shows an inline text input in the tree at the correct position for entering the filename.
+- **New Folder** (📁) — Creates a new folder in the selected directory. Shows an inline text input; on commit, creates the folder (via a `.keep` placeholder file) and expands it.
+- **Delete** (🗑️) — Deletes the selected directory or the currently open file. Shows a `confirm()` dialog describing what will be deleted (including "and all its contents" for folders). On confirmation, removes the entry via `electronAPI.deleteEntry`, clears the editor if the deleted path was open, and refreshes the tree.
 
 ### Outline Tab
 
@@ -128,6 +152,7 @@ The editor panel's sidebar has two tabs: **Files** and **Outline**.
 - **Open Folder**: Toolbar button or File → Open Folder (Cmd+Shift+O) shows a native folder picker.
 - **Autosave**: The editor autosaves to disk on every keystroke with a 500ms debounce via `electronAPI.writeFile`.
 - **Save Output**: A save button (💾) in the compilation panel header opens a native save dialog to write compiled HTML to disk.
+- **Delete**: The 🗑️ toolbar button deletes the selected folder or current file after confirmation.
 - **Keyboard**: Cmd+S saves the current file to disk immediately.
 
 ## Editor Panel

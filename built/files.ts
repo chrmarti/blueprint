@@ -17,6 +17,7 @@ let outlineTabBtn: HTMLButtonElement;
 
 let workspaceFolder: string | null = null;
 let currentFilePath: string | null = null;
+let selectedDir: string | null = null;
 const expandedDirs = new Set<string>();
 
 let onFileOpen: (filePath: string, content: string) => void = () => {};
@@ -33,6 +34,10 @@ export function initFileBrowser(opts: {
 
   filesTabBtn?.addEventListener('click', () => showSidebarTab('files'));
   outlineTabBtn?.addEventListener('click', () => showSidebarTab('outline'));
+
+  document.getElementById('new-file-btn')?.addEventListener('click', () => createNewEntry('file'));
+  document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewEntry('folder'));
+  document.getElementById('delete-btn')?.addEventListener('click', () => deleteSelectedEntry());
 
   if (window.electronAPI) {
     window.electronAPI.onFolderOpened((folder) => openFolder(folder));
@@ -91,6 +96,7 @@ async function renderDir(dirPath: string, depth: number): Promise<void> {
     const fullPath = dirPath + '/' + entry.name;
     const div = document.createElement('div');
     div.className = 'file-entry' + (entry.isDirectory ? ' directory' : '');
+    div.dataset.path = fullPath;
     if (fullPath === currentFilePath) div.classList.add('active');
     div.style.paddingLeft = `${8 + depth * 16}px`;
 
@@ -110,7 +116,9 @@ async function renderDir(dirPath: string, depth: number): Promise<void> {
     div.appendChild(name);
 
     if (entry.isDirectory) {
+      if (fullPath === selectedDir) div.classList.add('active');
       div.addEventListener('click', async () => {
+        selectedDir = fullPath;
         if (expandedDirs.has(fullPath)) {
           expandedDirs.delete(fullPath);
         } else {
@@ -119,7 +127,10 @@ async function renderDir(dirPath: string, depth: number): Promise<void> {
         await renderTree();
       });
     } else {
-      div.addEventListener('click', () => selectFile(fullPath));
+      div.addEventListener('click', () => {
+        selectedDir = null; // clear folder selection when a file is clicked
+        selectFile(fullPath);
+      });
     }
 
     fileTreeEl.appendChild(div);
@@ -162,4 +173,144 @@ export function getWorkspaceFolder(): string | null {
 export async function saveCurrentFile(content: string): Promise<void> {
   if (!window.electronAPI || !currentFilePath) return;
   await window.electronAPI.writeFile(currentFilePath, content);
+}
+
+// ── Delete file / folder ────────────────────────────────────────────
+
+async function deleteSelectedEntry(): Promise<void> {
+  if (!window.electronAPI) return;
+
+  // Determine what to delete: selected directory or current file
+  const targetPath = selectedDir || currentFilePath;
+  if (!targetPath || targetPath === workspaceFolder) return;
+
+  const name = targetPath.split('/').pop() || targetPath;
+  const isDir = selectedDir !== null;
+  const label = isDir ? `folder "${name}" and all its contents` : `file "${name}"`;
+
+  if (!confirm(`Delete ${label}?`)) return;
+
+  try {
+    await window.electronAPI.deleteEntry(targetPath);
+
+    // If we deleted the current file, clear editor state
+    if (currentFilePath && (currentFilePath === targetPath || currentFilePath.startsWith(targetPath + '/'))) {
+      currentFilePath = null;
+      onFileOpen('', '');
+    }
+    if (selectedDir === targetPath) selectedDir = null;
+    expandedDirs.delete(targetPath);
+    await renderTree();
+  } catch (err) {
+    console.error('Failed to delete:', err);
+    alert('Failed to delete: ' + (err as Error).message);
+  }
+}
+
+// ── Create new file / folder ────────────────────────────────────────
+
+function getActiveDir(): string | null {
+  // Prefer explicitly selected directory, then parent of current file, then workspace root
+  if (selectedDir) return selectedDir;
+  if (currentFilePath) {
+    const parts = currentFilePath.split('/');
+    parts.pop();
+    return parts.join('/');
+  }
+  return workspaceFolder;
+}
+
+function createNewEntry(type: 'file' | 'folder'): void {
+  if (!workspaceFolder) return;
+
+  const parentDir = getActiveDir();
+  if (!parentDir) return;
+
+  // Ensure parent is expanded so the inline input is visible
+  expandedDirs.add(parentDir);
+
+  // Render tree, then append an inline input at the target location
+  renderTree().then(() => {
+    const div = document.createElement('div');
+    div.className = 'file-entry';
+
+    // Determine depth based on parentDir relative to workspaceFolder
+    const relPath = parentDir.slice(workspaceFolder!.length);
+    const depth = relPath ? relPath.split('/').filter(Boolean).length : 0;
+    div.style.paddingLeft = `${8 + depth * 16}px`;
+
+    const icon = document.createElement('span');
+    icon.className = 'file-icon';
+    icon.textContent = type === 'folder' ? '📁' : '📄';
+
+    const input = document.createElement('input');
+    input.className = 'inline-input';
+    input.type = 'text';
+    input.placeholder = type === 'folder' ? 'folder name' : 'filename.ext';
+
+    div.appendChild(icon);
+    div.appendChild(input);
+
+    // Insert the input at the right position within parentDir's children
+    const allEntries = Array.from(fileTreeEl.querySelectorAll('.file-entry'));
+    // Find the parentDir entry itself, then skip past its children
+    let insertionPoint: Element | null = null;
+    let insideParent = parentDir === workspaceFolder; // root has no entry
+    for (const entry of allEntries) {
+      const entryPath = (entry as HTMLElement).dataset.path;
+      if (entryPath === parentDir) {
+        insideParent = true;
+        insertionPoint = entry;
+        continue;
+      }
+      if (insideParent && entryPath && entryPath.startsWith(parentDir + '/')) {
+        insertionPoint = entry;
+      } else if (insideParent && entryPath && !entryPath.startsWith(parentDir + '/')) {
+        break;
+      }
+    }
+    if (insertionPoint && insertionPoint.nextSibling) {
+      fileTreeEl.insertBefore(div, insertionPoint.nextSibling);
+    } else {
+      fileTreeEl.appendChild(div);
+    }
+
+    input.focus();
+
+    const commit = async () => {
+      const name = input.value.trim();
+      if (!name) {
+        div.remove();
+        return;
+      }
+      const fullPath = parentDir + '/' + name;
+      try {
+        if (type === 'folder') {
+          // Create folder by writing a placeholder and ensuring dir exists
+          await window.electronAPI!.writeFile(fullPath + '/.keep', '');
+          expandedDirs.add(fullPath);
+        } else {
+          await window.electronAPI!.writeFile(fullPath, '');
+        }
+        await renderTree();
+        if (type === 'file') {
+          await selectFile(fullPath);
+        }
+      } catch (err) {
+        console.error(`Failed to create ${type}:`, err);
+        div.remove();
+      }
+    };
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commit();
+      }
+      if (e.key === 'Escape') {
+        div.remove();
+      }
+    });
+    input.addEventListener('blur', commit);
+  });
 }

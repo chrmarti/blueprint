@@ -10,7 +10,7 @@ import * as path from 'path';
 const distDir = path.resolve('dist');
 if (!fs.existsSync(distDir)) fs.mkdirSync(distDir, { recursive: true });
 
-// Bundle client TypeScript
+// Bundle client (renderer) TypeScript
 await esbuild.build({
   entryPoints: ['built/main.ts'],
   bundle: true,
@@ -21,17 +21,30 @@ await esbuild.build({
   minify: false,
 });
 
-// Bundle server TypeScript
+// Bundle Electron main process
 await esbuild.build({
-  entryPoints: ['built/server.ts'],
+  entryPoints: ['built/electron.ts'],
   bundle: true,
-  outfile: 'dist/server.js',
-  format: 'esm',
+  outfile: 'dist/electron.cjs',
+  format: 'cjs',
   platform: 'node',
   target: 'node18',
   sourcemap: true,
   minify: false,
-  banner: { js: '// @ts-nocheck' },
+  external: ['electron'],
+});
+
+// Bundle preload script
+await esbuild.build({
+  entryPoints: ['built/preload.ts'],
+  bundle: true,
+  outfile: 'dist/preload.cjs',
+  format: 'cjs',
+  platform: 'node',
+  target: 'node18',
+  sourcemap: true,
+  minify: false,
+  external: ['electron'],
 });
 
 // Copy HTML

@@ -5,6 +5,7 @@
 
 import { loadSettings, saveOutput, pushHistory } from './storage';
 import { getCopilotToken, isSignedIn } from './auth';
+import { refreshTree } from './files';
 
 const SYSTEM_PROMPT = `You are a code generator. Given a structured markdown document describing an application, produce a complete, self-contained HTML file with embedded CSS and JavaScript that implements every requirement described. Output only the HTML file content, no explanation.`;
 
@@ -126,4 +127,19 @@ function stripCodeFences(text: string): string {
 function setStatus(type: 'info' | 'error' | 'success', msg: string): void {
   statusEl.textContent = msg;
   statusEl.className = type === 'info' ? '' : type;
+}
+
+export async function saveOutputToFile(): Promise<void> {
+  if (!window.electronAPI) return;
+  const output = getOutput();
+  if (!output.trim()) {
+    setStatus('error', 'No output to save');
+    return;
+  }
+  const filePath = await window.electronAPI.showSaveDialog('output.html');
+  if (filePath) {
+    await window.electronAPI.writeFile(filePath, output);
+    setStatus('success', `Saved to ${filePath.split('/').pop()}`);
+    refreshTree();
+  }
 }

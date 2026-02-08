@@ -6,11 +6,11 @@
 # Blueprint Compiler
 
 <!-- This document is the canonical definition of the application. The TypeScript
-     implementation lives under /built, compiles to /dist, and is served from a
-     local HTTP server. Keep this file in /src up to date whenever the
-     implementation changes. -->
+     implementation lives under /built, compiles to /dist, and runs as an
+     Electron desktop application that opens on a local folder. Keep this file
+     in /src up to date whenever the implementation changes. -->
 
-A web-based authoring environment for writing structured markdown blueprints and compiling them into executable applications using the Copilot SDK.
+A desktop authoring environment for writing structured markdown blueprints and compiling them into executable applications using the Copilot SDK. Built with Electron, the app opens on a local folder and reads/writes files directly on disk.
 
 ## Overview
 
@@ -21,42 +21,103 @@ Blueprint Compiler is a self-hosting tool: a markdown document describes an appl
 ```
 /src/blueprint.md     ← this document (canonical definition)
 /built/               ← TypeScript source
-  main.ts             ← entry point, boots all modules
+  electron.ts         ← Electron main process (window, menu, IPC, embedded server)
+  preload.ts          ← preload script (contextBridge for IPC)
+  main.ts             ← renderer entry point, boots all modules
   editor.ts           ← editor panel (textarea, outline, markdown preview)
   compiler.ts         ← compilation panel (Copilot API streaming call)
   preview.ts          ← preview panel (iframe sandbox, console forwarding)
   layout.ts           ← drag-handle resizable three-column layout
   settings.ts         ← settings modal, history drawer, theme, import/export
-  storage.ts          ← localStorage persistence layer
+  storage.ts          ← localStorage persistence layer (settings, history)
+  files.ts            ← file browser module (tree view, open/save via IPC)
   auth.ts             ← GitHub OAuth device flow + Copilot token management
-  server.ts           ← local Node.js server (static files + API proxy)
+  types.d.ts          ← global type declarations (ElectronAPI)
   index.html          ← HTML shell with all CSS
 /dist/                ← compiled output (esbuild bundle)
   index.html          ← copied from /built
-  app.js              ← bundled client JS (IIFE)
-  server.js           ← bundled server JS (ESM, Node)
-  blueprint.md        ← copied from /src for default loading
-package.json          ← dependencies: esbuild, typescript, marked
+  app.js              ← bundled renderer JS (IIFE)
+  electron.cjs        ← bundled Electron main process (CJS)
+  preload.cjs         ← bundled preload script (CJS)
+  blueprint.md        ← copied from /src for reference
+package.json          ← dependencies: electron, esbuild, typescript, marked
 tsconfig.json         ← TypeScript config (target ES2020, bundler resolution)
-build.mjs             ← build script: esbuild bundle + file copy
+build.mjs             ← build script: esbuild bundles + file copy
 ```
 
 ## Architecture
 
-The application is a single-page web UI composed of three primary regions:
+The application is an Electron desktop app composed of three primary regions in a single window:
 
-1. **Editor Panel** — A markdown editor with syntax highlighting, live preview, and structural navigation.
-2. **Compilation Panel** — Controls for invoking the Copilot SDK to transform the markdown into source code, with streaming output and error display.
+1. **Editor Panel** — A markdown editor with a file browser sidebar, outline navigation, live preview, and direct disk I/O.
+2. **Compilation Panel** — Controls for invoking the Copilot SDK to transform the markdown into source code, with streaming output, error display, and save-to-file.
 3. **Preview Panel** — A live-rendered view of the compiled application running in a sandboxed iframe.
 
 ### Technology Stack
 
+- **Desktop Runtime**: Electron (main process, preload, renderer).
 - **Frontend**: TypeScript compiled via esbuild into a single IIFE bundle, no framework dependencies.
 - **Markdown Engine**: `marked` (npm) for rendering and structural analysis.
-- **Compilation Backend**: GitHub Copilot chat completions API, accessed via the user's GitHub account and Copilot subscription. A local Node.js server proxies API requests to avoid CORS restrictions.
+- **Compilation Backend**: GitHub Copilot chat completions API, accessed via the user's GitHub account and Copilot subscription. An embedded HTTP server in the Electron main process proxies API requests.
+- **File System**: Electron IPC (`ipcMain.handle` / `ipcRenderer.invoke`) for reading directories, reading files, writing files, and showing native dialogs.
 - **Runtime Sandbox**: An iframe with `srcdoc` and `sandbox="allow-scripts allow-modals"` for rendering and executing compiled output in isolation.
-- **Build Tooling**: esbuild for bundling (client IIFE + server ESM), TypeScript for type checking. Single `node build.mjs` produces `/dist`.
-- **Local Server**: A Node.js HTTP server (`server.ts`) that serves static files from `/dist` and proxies API calls to GitHub and the Copilot API.
+- **Build Tooling**: esbuild for bundling (renderer IIFE + main CJS + preload CJS), TypeScript for type checking.
+
+## Electron Main Process
+
+The Electron main process (`electron.ts`) handles:
+
+### Window Management
+
+- Creates a `BrowserWindow` (1400×900 default) loading the renderer from an embedded HTTP server.
+- Supports a folder path argument on the command line: `electron . /path/to/folder`.
+- Sets the window title to include the workspace folder name.
+- Application menu with File → Open Folder (Cmd+Shift+O), standard Edit and View menus.
+
+### Embedded HTTP Server
+
+- Starts an HTTP server on a random available port (`port 0`) bound to `127.0.0.1`.
+- Serves static files from the `/dist` directory (same as `__dirname`).
+- Proxies API routes to GitHub and Copilot (same routes as before — see Server Proxy Routes below).
+- The renderer loads from `http://127.0.0.1:<port>`, so all existing `fetch()` calls work unchanged.
+
+### IPC Handlers
+
+- `dialog:openFolder` — Opens a native folder picker, returns the selected path.
+- `workspace:getFolder` — Returns the current workspace folder path.
+- `fs:readDir` — Lists directory entries (name, isDirectory), sorted directories-first, excluding dotfiles.
+- `fs:readFile` — Reads a file's UTF-8 content.
+- `fs:writeFile` — Writes UTF-8 content to a file (creates parent directories as needed).
+- `dialog:saveFile` — Opens a native save dialog, returns the chosen path.
+
+### Preload Script
+
+The preload script (`preload.ts`) uses `contextBridge.exposeInMainWorld` to expose a safe `window.electronAPI` object with typed methods for all IPC operations.
+
+## File Browser
+
+The editor panel's sidebar has two tabs: **Files** and **Outline**.
+
+### Files Tab
+
+- Displays a tree view of the workspace folder, populated via `electronAPI.readDir`.
+- Directories show expand/collapse arrows (▸/▾) and are sorted before files.
+- Files show type-appropriate icons (📝 .md, 🌐 .html, 📜 .ts/.js, etc.).
+- Clicking a file loads its content into the editor via `electronAPI.readFile`.
+- The active file is highlighted with the accent color.
+- The tree is re-rendered after saving compilation output to reflect new files.
+
+### Outline Tab
+
+- Derived from heading structure (H1–H3) of the currently open markdown file.
+- Click-to-navigate scrolls the editor to the corresponding heading.
+
+### File Operations
+
+- **Open Folder**: Toolbar button or File → Open Folder (Cmd+Shift+O) shows a native folder picker.
+- **Autosave**: The editor autosaves to disk on every keystroke with a 500ms debounce via `electronAPI.writeFile`.
+- **Save Output**: A save button (💾) in the compilation panel header opens a native save dialog to write compiled HTML to disk.
+- **Keyboard**: Cmd+S saves the current file to disk immediately.
 
 ## Editor Panel
 
@@ -64,13 +125,12 @@ The editor is a full-featured markdown authoring surface.
 
 ### Requirements
 
-- Monospaced text input area with line numbers.
-- Live-rendered markdown preview in a split or tabbed view.
-- Syntax highlighting for markdown constructs (headings, code blocks, lists, links).
+- Monospaced text input area.
+- Live-rendered markdown preview in a tabbed view (Edit / Preview tabs).
 - A document outline sidebar derived from heading structure, supporting click-to-navigate.
-- Autosave to `localStorage` on every keystroke with debounce (500ms).
+- Autosave to disk on every keystroke with debounce (500ms).
 - Import and export of `.md` files via drag-and-drop and file picker.
-- Keyboard shortcuts: `Cmd/Ctrl+S` to force save, `Cmd/Ctrl+B` to compile, `Cmd/Ctrl+P` to toggle preview.
+- Keyboard shortcuts: `Cmd/Ctrl+S` to save, `Cmd/Ctrl+B` to compile, `Cmd/Ctrl+P` to toggle preview.
 
 ### Document Structure Conventions
 
@@ -96,17 +156,17 @@ The compilation panel orchestrates transformation of the authored markdown into 
 - Streaming response display: compiled output appears token-by-token in a read-only code viewer.
 - An **errors** section that surfaces any SDK invocation failures or malformed output.
 - A **history** drawer listing previous compilations with timestamps, allowing rollback.
-- Compilation output is stored in `localStorage` alongside the source document.
+- A **save** button (💾) to write compiled output to a file on disk via a native save dialog.
+- Compilation output is stored in `localStorage` for session persistence.
 
 ### Copilot SDK Integration
 
 - Authentication via GitHub OAuth device flow (no API keys needed).
 - Users sign in with their GitHub account; the app obtains a Copilot token using their subscription.
-- The local server proxies requests to `https://api.githubcopilot.com/chat/completions`.
+- The embedded server proxies requests to `https://api.githubcopilot.com/chat/completions`.
 - Model selection dropdown, dynamically populated from the Copilot API's available models list (default: `claude-opus-4.6`).
 - Max token limit is auto-filled from the selected model's `capabilities.limits.max_output_tokens` metadata.
 - Temperature slider (default: 0) for controlling output determinism.
-- Max token limit input (default: 16000).
 - Streaming via `ReadableStream` reader, parsing SSE `data:` lines in real time.
 
 ## Authentication
@@ -116,7 +176,7 @@ The application uses the GitHub OAuth device flow to authenticate users and acce
 ### Device Flow
 
 1. User clicks "Sign in with GitHub" in the toolbar or settings.
-2. The app requests a device code from GitHub via the local proxy (`/api/auth/device-code`).
+2. The app requests a device code from GitHub via the embedded proxy (`/api/auth/device-code`).
 3. A one-time code is displayed; the user copies it and opens GitHub's verification page.
 4. The app polls for authorization (`/api/auth/token`) until the user completes sign-in.
 5. On success, the GitHub access token is stored in `localStorage`.
@@ -129,7 +189,7 @@ The application uses the GitHub OAuth device flow to authenticate users and acce
 
 ### Server Proxy Routes
 
-The local Node.js server (`server.ts`) provides these proxy endpoints to avoid CORS issues:
+The embedded HTTP server provides these proxy endpoints:
 
 - `POST /api/auth/device-code` → `https://github.com/login/device/code`
 - `POST /api/auth/token` → `https://github.com/login/oauth/access_token`
@@ -157,7 +217,7 @@ The preview panel renders the compiled output as a live, interactive application
 
 - Default layout: three-column, resizable via drag handles.
 - Collapsible panels: each panel can be minimized to a labeled tab on the edge of the viewport.
-- A top toolbar contains: application title, compile button, layout toggles, and a settings gear icon.
+- A top toolbar contains: application title, open-folder button, folder name, compile button, layout toggles, and a settings gear icon.
 
 ### Settings
 
@@ -187,10 +247,13 @@ The initial bootstrap version is the TypeScript implementation under `/built`, c
 
 ### Bootstrap Requirements
 
-- TypeScript source in `/built`, compiled with esbuild to a client IIFE bundle (`dist/app.js`) and a server ESM bundle (`dist/server.js`).
+- TypeScript source in `/built`, compiled with esbuild to a renderer IIFE bundle (`dist/app.js`), an Electron main process CJS bundle (`dist/electron.cjs`), and a preload CJS bundle (`dist/preload.cjs`).
 - An `index.html` shell in `/built` with all CSS embedded, copied to `/dist` at build time.
-- `blueprint.md` copied from `/src` to `/dist` so the app can load it as default content.
-- Served via `node dist/server.js` on port 8080 (local HTTP server with API proxy).
-- No build-time framework dependencies beyond esbuild, typescript, and marked.
+- `blueprint.md` copied from `/src` to `/dist` for reference.
+- Launched via `npm start` (runs `electron .`) which starts the Electron app.
+- The Electron main process starts an embedded HTTP server on a random port, serves static files from `/dist`, and proxies API calls.
+- The renderer loads from `http://127.0.0.1:<port>` inside the BrowserWindow.
+- A folder can be passed on the command line: `npm start -- /path/to/folder`.
+- No build-time framework dependencies beyond electron, esbuild, typescript, and marked.
 
 This is sufficient to compile this document into the first real version of the tool.

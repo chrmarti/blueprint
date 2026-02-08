@@ -4,17 +4,31 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { initEditor, setContent, getContent, setFontSize } from './editor';
-import { initCompiler, compile, setOutput, getOutput } from './compiler';
+import { initCompiler, compile, setOutput, getOutput, saveOutputToFile } from './compiler';
 import { initPreview, loadPreview } from './preview';
 import { initLayout } from './layout';
 import { initSettings, applyTheme, updateAuthUI } from './settings';
-import { loadMarkdown, saveMarkdown, loadOutput, loadSettings, saveSettings } from './storage';
+import { loadOutput, loadSettings, saveSettings } from './storage';
 import { initAuth } from './auth';
+import { initFileBrowser, saveCurrentFile, promptOpenFolder } from './files';
 
 async function boot(): Promise<void> {
-  // Initialize all modules
+  // Initialize file browser (uses Electron IPC for disk access)
+  initFileBrowser({
+    onFileOpen: (filePath, content) => {
+      setContent(content);
+      // Show filename in editor panel header
+      const parts = filePath.split('/');
+      const editorTitle = document.querySelector('#editor-panel .panel-header > span');
+      if (editorTitle) editorTitle.textContent = parts[parts.length - 1];
+    },
+  });
+
+  // Initialize editor — autosave writes to disk via IPC
   initEditor({
-    onSave: (text: string) => saveMarkdown(text),
+    onSave: (text: string) => {
+      saveCurrentFile(text);
+    },
   });
 
   initCompiler({
@@ -35,31 +49,29 @@ async function boot(): Promise<void> {
   applyTheme(settings.theme);
   setFontSize(settings.fontSize);
 
-  // Restore saved state
-  let md = loadMarkdown();
-  if (!md) {
-    // Load the blueprint as default content
-    try {
-      const res = await fetch('blueprint.md');
-      if (res.ok) md = await res.text();
-    } catch {
-      // ignore
-    }
-  }
-  if (md) {
-    setContent(md);
-    saveMarkdown(md);
-  }
-
+  // Restore last compiled output from localStorage (session persistence)
   const output = loadOutput();
   if (output) {
     setOutput(output);
     loadPreview(output);
   }
 
+  // If Electron provided a workspace folder on launch, the file browser
+  // picks it up via the 'workspace:folderOpened' IPC event automatically.
+
+  // Toolbar: open folder
+  document.getElementById('open-folder-btn')?.addEventListener('click', () => {
+    promptOpenFolder();
+  });
+
   // Toolbar: compile
   document.getElementById('compile-btn')?.addEventListener('click', () => {
     compile(getContent());
+  });
+
+  // Toolbar: save output to file
+  document.getElementById('save-output-btn')?.addEventListener('click', () => {
+    saveOutputToFile();
   });
 
   // Toolbar: theme toggle
@@ -79,7 +91,7 @@ async function boot(): Promise<void> {
     }
     if (mod && e.key === 's') {
       e.preventDefault();
-      saveMarkdown(getContent());
+      saveCurrentFile(getContent());
     }
     if (mod && e.key === 'p') {
       e.preventDefault();

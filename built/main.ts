@@ -59,6 +59,30 @@ async function boot(): Promise<void> {
   // If Electron provided a workspace folder on launch, the file browser
   // picks it up via the 'workspace:folderOpened' IPC event automatically.
 
+  // Listen for auto-compile command (triggered by `npm start -- compile [file]`)
+  if (window.electronAPI) {
+    window.electronAPI.onAutoCompile(async (filePath) => {
+      if (filePath) {
+        try {
+          const content = await window.electronAPI!.readFile(filePath);
+          setContent(content);
+          const parts = filePath.split('/');
+          const editorTitle = document.querySelector('#editor-panel .panel-header > span');
+          if (editorTitle) editorTitle.textContent = parts[parts.length - 1];
+        } catch (err) {
+          console.error('Failed to read file for auto-compile:', err);
+          return;
+        }
+      }
+      const md = getContent();
+      if (md.trim()) {
+        compile(md);
+      } else {
+        console.warn('Auto-compile: no content to compile');
+      }
+    });
+  }
+
   // Toolbar: open folder
   document.getElementById('open-folder-btn')?.addEventListener('click', () => {
     promptOpenFolder();

@@ -7,11 +7,10 @@ import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import https from 'node:https';
-import type { CopilotClient as CopilotClientType, AssistantMessageEvent } from '@github/copilot-sdk';
+import { initAgent, compileWithAgent, stopAgent } from './copilot-agent';
 
 let mainWindow: BrowserWindow | null = null;
 let workspaceFolder: string | null = null;
-let copilotClient: CopilotClientType | null = null;
 
 // ── HTTPS request helper ────────────────────────────────────────────
 
@@ -165,30 +164,14 @@ function setupIPC(): void {
     }, null);
   });
 
-  // ── Copilot SDK ─────────────────────────────────────────────────
+  // ── Copilot Agent ────────────────────────────────────────────────
 
   ipcMain.handle('copilot:init', async (_event, githubToken: string) => {
-    try {
-      if (copilotClient) {
-        console.log('[copilot] Stopping previous client...');
-        await copilotClient.stop().catch(() => {});
-        copilotClient = null;
-      }
-      const { CopilotClient } = await import('@github/copilot-sdk');
-      const cliPath = path.join(app.getAppPath(), 'node_modules', '.bin', 'copilot');
-      console.log('[copilot] Starting CLI from:', cliPath);
-      copilotClient = new CopilotClient({
-        cliPath,
-        githubToken,
-        useLoggedInUser: false,
-      });
-      await copilotClient.start();
-      console.log('[copilot] Client started successfully');
-      return { ok: true };
-    } catch (err) {
-      console.error('[copilot] Init error:', (err as Error).message);
-      return { ok: false, error: (err as Error).message };
-    }
+    return initAgent({
+      githubToken,
+      appRoot: app.getAppPath(),
+      workspaceFolder: workspaceFolder || undefined,
+    });
   });
 
   ipcMain.handle('copilot:compile', async (_event, opts: {
@@ -196,87 +179,35 @@ function setupIPC(): void {
     systemPrompt: string;
     userPrompt: string;
   }) => {
-    if (!copilotClient) {
-      return { ok: false, error: 'Copilot SDK not initialized. Please sign in.' };
-    }
-    try {
-      console.log(`[copilot] Creating session with model: ${opts.model}`);
-      const session = await copilotClient.createSession({
-        model: opts.model,
-        streaming: true,
-        systemMessage: {
-          mode: 'replace',
-          content: opts.systemPrompt,
-        },
-      });
-
-      // Log all session events (except deltas, which are too noisy)
-      session.on((event: { type: string; data?: any }) => {
-        switch (event.type) {
-          case 'session.start':
-            console.log(`[copilot] Session started (model: ${event.data?.selectedModel}, copilot: ${event.data?.copilotVersion})`);
-            break;
-          case 'session.info':
-            console.log(`[copilot] Info: ${event.data?.message}`);
-            break;
-          case 'session.error':
-            console.error(`[copilot] Session error: ${event.data?.message}`);
-            break;
-          case 'session.idle':
-            console.log('[copilot] Session idle');
-            break;
-          case 'assistant.turn_start':
-            console.log(`[copilot] Turn started: ${event.data?.turnId}`);
-            break;
-          case 'assistant.turn_end':
-            console.log(`[copilot] Turn ended: ${event.data?.turnId}`);
-            break;
-          case 'assistant.usage':
-            console.log(`[copilot] Usage — model: ${event.data?.model}, input: ${event.data?.inputTokens}, output: ${event.data?.outputTokens}, duration: ${event.data?.duration}ms`);
-            break;
-          case 'assistant.intent':
-            console.log(`[copilot] Intent: ${event.data?.intent}`);
-            break;
-          case 'tool.execution_start':
-            console.log(`[copilot] Tool start: ${event.data?.toolName} (${event.data?.toolCallId})`);
-            break;
-          case 'tool.execution_complete':
-            console.log(`[copilot] Tool complete: ${event.data?.toolCallId} (success: ${event.data?.success})`);
-            break;
-          case 'session.model_change':
-            console.log(`[copilot] Model change: ${event.data?.previousModel} → ${event.data?.newModel}`);
-            break;
-          case 'session.shutdown':
-            console.log(`[copilot] Shutdown — requests: ${event.data?.totalPremiumRequests}, api time: ${event.data?.totalApiDurationMs}ms`);
-            break;
-          case 'assistant.message_delta':
-            // too noisy to log
-            break;
-          default:
-            console.log(`[copilot] Event: ${event.type}`);
+    const folder = workspaceFolder || process.cwd();
+    console.log(`[copilot] Compile request — model: ${opts.model}, workspace: ${folder}`);
+    return compileWithAgent({
+      model: opts.model,
+      markdown: opts.userPrompt,
+      workspaceFolder: folder,
+      systemPrompt: opts.systemPrompt,
+      onEvent: (event) => {
+        // Relay all events to the renderer
+        mainWindow?.webContents.send('copilot:event', event);
+        // Also relay chunks for backward-compat streaming
+        if (event.type === 'chunk') {
+          mainWindow?.webContents.send('copilot:chunk', event.message);
         }
-      });
-
-      session.on('assistant.message_delta', (event: { data: { deltaContent: string } }) => {
-        mainWindow?.webContents.send('copilot:chunk', event.data.deltaContent);
-      });
-      // Use a 10-minute timeout — large blueprints can take a while to compile
-      console.log('[copilot] Sending prompt, waiting for response (timeout: 600s)...');
-      const response = await session.sendAndWait({ prompt: opts.userPrompt }, 600_000);
-      console.log(`[copilot] Response received (${response?.data?.content?.length || 0} chars)`);
-      await session.destroy();
-      return { ok: true, content: response?.data?.content || '' };
-    } catch (err) {
-      console.error('[copilot] Compile error:', (err as Error).message);
-      return { ok: false, error: (err as Error).message };
-    }
+        // Log to terminal
+        if (event.type !== 'chunk') {
+          const prefix = `[copilot] ${event.type}`;
+          if (event.type === 'error') {
+            console.error(`${prefix}: ${event.message}`);
+          } else {
+            console.log(`${prefix}: ${event.message}`);
+          }
+        }
+      },
+    });
   });
 
   ipcMain.handle('copilot:stop', async () => {
-    if (copilotClient) {
-      await copilotClient.stop().catch(() => {});
-      copilotClient = null;
-    }
+    await stopAgent();
   });
 }
 
@@ -374,13 +305,25 @@ function createWindow(): void {
 async function main(): Promise<void> {
   await app.whenReady();
 
-  // Check for folder argument on command line
+  // Check for folder argument and compile command on command line
   const args = process.argv.slice(app.isPackaged ? 1 : 2);
-  const folderArg = args.find(a => !a.startsWith('-'));
-  if (folderArg) {
-    const resolved = path.resolve(folderArg);
-    if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+  let autoCompileFile: string | null = null;
+  let compileMode = false;
+
+  for (const arg of args) {
+    if (arg === 'compile') {
+      compileMode = true;
+      continue;
+    }
+    if (arg.startsWith('-')) continue;
+    const resolved = path.resolve(arg);
+    if (!fs.existsSync(resolved)) continue;
+    if (fs.statSync(resolved).isDirectory()) {
       workspaceFolder = resolved;
+    } else if (fs.statSync(resolved).isFile()) {
+      autoCompileFile = resolved;
+      // Infer workspace folder from file's directory if not set
+      if (!workspaceFolder) workspaceFolder = path.dirname(resolved);
     }
   }
 
@@ -392,9 +335,23 @@ async function main(): Promise<void> {
     }
   }
 
+  if (compileMode) {
+    console.log(`[main] Compile mode enabled${autoCompileFile ? ` — file: ${autoCompileFile}` : ''}`);
+  }
+
   setupIPC();
   buildMenu();
   createWindow();
+
+  // Send auto-compile command after the renderer is ready
+  if (compileMode) {
+    mainWindow?.webContents.on('did-finish-load', () => {
+      // Give the renderer time to init auth and restore session
+      setTimeout(() => {
+        mainWindow?.webContents.send('command:compile', autoCompileFile);
+      }, 2000);
+    });
+  }
 
   app.on('activate', () => {
     if (!mainWindow) createWindow();
@@ -402,7 +359,7 @@ async function main(): Promise<void> {
 }
 
 app.on('window-all-closed', () => {
-  if (copilotClient) copilotClient.stop().catch(() => {});
+  stopAgent().catch(() => {});
   if (process.platform !== 'darwin') app.quit();
 });
 

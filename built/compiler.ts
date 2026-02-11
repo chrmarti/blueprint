@@ -7,7 +7,13 @@ import { loadSettings, saveOutput, pushHistory } from './storage';
 import { isSignedIn } from './auth';
 import { refreshTree } from './files';
 
-const SYSTEM_PROMPT = `You are a code generator. Given a structured markdown document describing an application, produce a complete, self-contained HTML file with embedded CSS and JavaScript that implements every requirement described. Output only the HTML file content, no explanation.`;
+const SYSTEM_PROMPT = `You are a code generator. Your working directory is the project workspace root. The user message contains the contents of the markdown blueprints from the src/ folder. Produce a complete, self-contained implementation and write the output files into the built/ folder (relative to the working directory) using your tools. Do not wrap code in markdown fences — write actual files.
+
+Workspace convention (paths relative to working directory):
+- src/   — markdown blueprints (input, already provided in the user message)
+- built/ — generated source code (output, written by you)
+
+Write all output files under built/. Create the built/ directory if it does not exist.`;
 
 let outputEl: HTMLTextAreaElement;
 let statusEl: HTMLElement;
@@ -27,6 +33,11 @@ export function getOutput(): string {
   return outputEl.value;
 }
 
+function appendLog(line: string): void {
+  outputEl.value += line + '\n';
+  outputEl.scrollTop = outputEl.scrollHeight;
+}
+
 export async function compile(markdown: string): Promise<void> {
   if (!isSignedIn()) {
     setStatus('error', 'Not signed in. Click the Sign in button in the toolbar or open Settings.');
@@ -43,13 +54,42 @@ export async function compile(markdown: string): Promise<void> {
   }
 
   try {
-    // Listen for streaming chunks from the Copilot SDK
-    let accumulated = '';
+    // Listen for agent events from the Copilot SDK
     window.electronAPI.removeCopilotChunkListeners();
+    window.electronAPI.removeCopilotEventListeners();
+
+    // Stream text deltas
+    let textOutput = '';
     window.electronAPI.onCopilotChunk((delta: string) => {
-      accumulated += delta;
-      outputEl.value = accumulated;
+      textOutput += delta;
+      // Show text in output area (agent may also print explanations)
+      outputEl.value = textOutput;
       outputEl.scrollTop = outputEl.scrollHeight;
+    });
+
+    // Agent lifecycle events (tools, progress)
+    window.electronAPI.onCopilotEvent((event: { type: string; message?: string; data?: any }) => {
+      switch (event.type) {
+        case 'tool_start':
+          setStatus('info', `🔧 ${event.message}`);
+          break;
+        case 'tool_complete':
+          setStatus('info', `✅ Tool done`);
+          break;
+        case 'usage':
+          setStatus('info', `📊 ${event.message}`);
+          break;
+        case 'error':
+          setStatus('error', event.message || 'Unknown error');
+          break;
+        case 'files_changed':
+          // Refresh the file tree when the agent writes files
+          refreshTree();
+          break;
+        case 'done':
+          setStatus('success', event.message || 'Done');
+          break;
+      }
     });
 
     const result = await window.electronAPI.copilotCompile({
@@ -58,37 +98,31 @@ export async function compile(markdown: string): Promise<void> {
       userPrompt: markdown,
     });
     window.electronAPI.removeCopilotChunkListeners();
+    window.electronAPI.removeCopilotEventListeners();
 
     if (!result.ok) {
       setStatus('error', `Compilation failed: ${result.error || 'Unknown error'}`);
       return;
     }
 
-    // Use accumulated streaming content (or final content from SDK)
-    const raw = accumulated || result.content || '';
-    // Strip markdown code fences if the model wrapped output
-    const cleaned = stripCodeFences(raw);
-    outputEl.value = cleaned;
+    // The agent writes files to disk — the output area shows its text/explanation
+    const output = textOutput || '(Agent wrote files to disk — check the file tree)';
+    outputEl.value = output;
 
-    saveOutput(cleaned);
+    saveOutput(output);
     pushHistory({
       timestamp: Date.now(),
       markdown,
-      output: cleaned,
+      output,
     });
 
-    setStatus('success', `Compiled successfully (${cleaned.length} bytes)`);
-    onCompiled(cleaned);
+    // Refresh file tree one more time to pick up any late writes
+    refreshTree();
+    setStatus('success', 'Compilation complete — files written to workspace');
+    onCompiled(output);
   } catch (err) {
     setStatus('error', `Compilation failed: ${(err as Error).message}`);
   }
-}
-
-function stripCodeFences(text: string): string {
-  const trimmed = text.trim();
-  // Match ```html ... ``` wrapper
-  const match = trimmed.match(/^```(?:html)?\s*\n([\s\S]*?)\n```\s*$/);
-  return match ? match[1] : trimmed;
 }
 
 function setStatus(type: 'info' | 'error' | 'success', msg: string): void {

@@ -38,10 +38,13 @@ interface ElectronAPI {
   copilotStop(): Promise<void>;
   onCopilotChunk(callback: (delta: string) => void): void;
   removeCopilotChunkListeners(): void;
+  onCopilotEvent(callback: (event: { type: string; message?: string; data?: any }) => void): void;
+  removeCopilotEventListeners(): void;
 
   // Window events
   onFolderOpened(callback: (folder: string) => void): void;
   onMenuOpenFolder(callback: () => void): void;
+  onAutoCompile(callback: (filePath: string | null) => void): void;
   platform: string;
 }
 

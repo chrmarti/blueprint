@@ -10,11 +10,13 @@
      Electron desktop application that opens on a local folder. Keep this file
      in /src up to date whenever the implementation changes. -->
 
-A desktop authoring environment for writing structured markdown blueprints and compiling them into executable applications using the Copilot SDK. Built with Electron, the app opens on a local folder and reads/writes files directly on disk.
+A desktop authoring environment for writing structured markdown blueprints and compiling them into executable applications using the Copilot SDK as an agent. The agent reads the markdown, reasons about the required implementation, and creates/updates files directly in the workspace folder using its tools. The output can be anything — an Electron app, a web app, a CLI tool, a library, or any other kind of software. Built with Electron, the app opens on a local folder and reads/writes files directly on disk.
 
 ## Overview
 
-Blueprint Compiler is a self-hosting tool: a markdown document describes an application, and the tool transforms that description into working code. The tool itself is defined by the document you are reading now, and will be compiled by an early bootstrap version of itself until it can produce its own runtime.
+Blueprint Compiler transforms markdown documents into working software. A markdown document describes an application — its architecture, components, requirements, and behavior — and the compiler turns that description into code via the Copilot SDK agent. The agent runs the Copilot CLI through the SDK's `CopilotClient`, which manages a JSON-RPC session. Within that session, the agent uses file-writing tools to create and update files directly in the workspace folder, rather than returning code as text output.
+
+The long-term goal is **self-hosting**: this tool is itself defined by a markdown blueprint (this document), and will eventually be able to compile itself. To get there, we start with simpler samples (single-file HTML apps, small CLI tools) and progressively tackle more complex multi-file projects until the tool can produce its own runtime.
 
 ## Project Structure
 
@@ -25,13 +27,15 @@ Blueprint Compiler is a self-hosting tool: a markdown document describes an appl
   preload.ts          ← preload script (contextBridge for IPC)
   main.ts             ← renderer entry point, boots all modules
   editor.ts           ← editor panel (textarea, outline, markdown preview)
-  compiler.ts         ← compilation panel (Copilot API streaming call)
+  compiler.ts         ← compilation panel (agent events, streaming)
+  copilot-agent.ts    ← shared Copilot agent module (used by Electron & CLI)
   preview.ts          ← preview panel (iframe sandbox, console forwarding)
   layout.ts           ← drag-handle resizable three-column layout
   settings.ts         ← settings modal, history drawer, theme, import/export
   storage.ts          ← localStorage persistence layer (settings, history)
   files.ts            ← file browser module (tree view, open/save via IPC)
   auth.ts             ← GitHub OAuth device flow + Copilot token management
+  compile-cli.ts      ← standalone CLI compile tool (no Electron)
   types.d.ts          ← global type declarations (ElectronAPI)
   index.html          ← HTML shell with all CSS
 /dist/                ← compiled output (esbuild bundle)
@@ -39,6 +43,7 @@ Blueprint Compiler is a self-hosting tool: a markdown document describes an appl
   app.js              ← bundled renderer JS (IIFE)
   electron.cjs        ← bundled Electron main process (CJS)
   preload.cjs         ← bundled preload script (CJS)
+  compile-cli.mjs     ← bundled CLI compile tool (ESM)
   blueprint.md        ← copied from /src for reference
 package.json          ← dependencies: electron, esbuild, typescript, marked, @github/copilot-sdk, @github/copilot
 tsconfig.json         ← TypeScript config (target ES2020, bundler resolution)
@@ -58,7 +63,7 @@ The application is an Electron desktop app composed of three primary regions in 
 - **Desktop Runtime**: Electron (main process, preload, renderer).
 - **Frontend**: TypeScript compiled via esbuild into a single IIFE bundle, no framework dependencies.
 - **Markdown Engine**: `marked` (npm) for rendering and structural analysis.
-- **Compilation Backend**: GitHub Copilot SDK (`@github/copilot-sdk`), which communicates with the Copilot CLI (`@github/copilot`) via JSON-RPC. The SDK handles authentication, model selection, and streaming chat completions. The Electron main process manages the SDK client lifecycle and relays streaming chunks to the renderer via IPC.
+- **Compilation Backend**: GitHub Copilot SDK (`@github/copilot-sdk`), which communicates with the Copilot CLI (`@github/copilot`) via JSON-RPC. The SDK handles authentication, model selection, and agent tool execution. A shared module (`copilot-agent.ts`) encapsulates the SDK lifecycle and is used by both the Electron main process and the standalone CLI. The agent creates/updates files directly in the workspace folder via its built-in tools. Events (tool calls, progress, errors) are relayed to UIs via typed callbacks.
 - **File System**: Electron IPC (`ipcMain.handle` / `ipcRenderer.invoke`) for reading directories, reading files, writing files, and showing native dialogs.
 - **Runtime Sandbox**: An iframe with `srcdoc` and `sandbox="allow-scripts allow-modals"` for rendering and executing compiled output in isolation.
 - **Build Tooling**: esbuild for bundling (renderer IIFE + main CJS + preload CJS), TypeScript for type checking.
@@ -84,13 +89,23 @@ Authentication API calls (GitHub OAuth device flow) are made from the main proce
 - `api:copilotToken(ghToken)` → `GET https://api.github.com/copilot_internal/v2/token` — returns `{ status, body }`
 - `api:copilotModels(copilotToken)` → `GET https://api.githubcopilot.com/models` — returns `{ status, body }`
 
-### Copilot SDK IPC
+### Copilot Agent (Shared Module)
 
-The Copilot SDK runs in the main process and manages the CLI lifecycle:
+The `copilot-agent.ts` module is the shared compilation backend, used by both the Electron main process and the standalone CLI. It wraps the Copilot SDK:
 
-- `copilot:init(githubToken)` — Starts the Copilot CLI via the SDK, passing the user's GitHub token for authentication. Returns `{ ok, error? }`.
-- `copilot:compile({ model, systemPrompt, userPrompt })` — Creates a streaming session, sends the prompt, and relays `assistant.message_delta` events to the renderer via `webContents.send('copilot:chunk', delta)`. Uses a 10-minute timeout (600,000ms) for `sendAndWait()` since compiling full blueprints can take longer than the SDK's 60-second default. Returns `{ ok, content?, error? }` on completion.
-- `copilot:stop` — Stops the Copilot CLI process.
+- `initAgent({ githubToken, appRoot })` — Dynamically imports `@github/copilot-sdk` (ESM-only, loaded via `await import()`), creates a `CopilotClient` pointing to the CLI binary, and starts it. Safe to call multiple times (restarts the client).
+- `compileWithAgent({ model, markdown, workspaceFolder, systemPrompt?, onEvent })` — Creates a streaming session with `environment: { cwd: workspaceFolder }` so the agent's file tools operate in the project folder. Attaches a wildcard event listener that emits typed `CompileEvent`s (`log`, `chunk`, `tool_start`, `tool_complete`, `usage`, `error`, `done`, `files_changed`). Calls `sendAndWait()` with a 600-second timeout. Returns `{ ok, error? }`.
+- `stopAgent()` — Destroys the active session and stops the client.
+
+The module uses `import type` for compile-time SDK types and `await import('@github/copilot-sdk')` at runtime, since the SDK is ESM-only and the Electron main process is bundled as CJS.
+
+### Copilot SDK IPC (Electron)
+
+The Electron main process delegates to the shared agent module via IPC:
+
+- `copilot:init(githubToken)` — Calls `initAgent()` with the GitHub token and `app.getAppPath()`. Returns `{ ok, error? }`.
+- `copilot:compile({ model, systemPrompt, userPrompt })` — Calls `compileWithAgent()` and relays events to the renderer: `copilot:chunk` for text deltas (backward-compatible streaming) and `copilot:event` for structured agent events (tool calls, usage, errors, files_changed). Returns `{ ok, error? }` on completion.
+- `copilot:stop` — Calls `stopAgent()` to clean up the session and client.
 
 ### Logging
 
@@ -185,11 +200,13 @@ The compilation panel orchestrates transformation of the authored markdown into 
 
 ### Requirements
 
-- A **Compile** button that sends the current markdown content to the Copilot SDK.
+- A **Compile** button that sends the current markdown content to the Copilot SDK agent.
 - The SDK prompt is constructed by combining:
-  - A system message defining the compiler's role: *"You are a code generator. Given a structured markdown document describing an application, produce a complete, self-contained HTML file with embedded CSS and JavaScript that implements every requirement described. Output only the HTML file content, no explanation."*
+  - A system message defining the compiler's role: *"You are a code generator. Given a structured markdown document describing an application, produce a complete, self-contained implementation. Write the output files directly to disk using your tools. Do not wrap code in markdown fences — write actual files."*
   - The full markdown document as the user message.
-- Streaming response display: compiled output appears token-by-token in a read-only code viewer.
+- The agent writes files directly to the workspace folder via its tools; the output panel shows the agent's text output (explanations, progress).
+- Structured agent events (tool starts, completions, file changes) update the status bar in real time.
+- The file tree auto-refreshes when the agent signals `files_changed`.
 - An **errors** section that surfaces any SDK invocation failures or malformed output.
 - A **history** drawer listing previous compilations with timestamps, allowing rollback.
 - A **save** button (💾) to write compiled output to a file on disk via a native save dialog.
@@ -198,8 +215,8 @@ The compilation panel orchestrates transformation of the authored markdown into 
 ### Copilot SDK Integration
 
 - Authentication via GitHub OAuth device flow (no API keys needed).
-- Users sign in with their GitHub account; the GitHub token is passed to the Copilot SDK which handles Copilot authentication internally.
-- Compilation uses `@github/copilot-sdk`: the main process creates a `CopilotClient`, starts the Copilot CLI (`@github/copilot`), creates a streaming session with the selected model and system prompt, and relays `assistant.message_delta` chunks to the renderer via IPC.
+- Users sign in with their GitHub account; the GitHub token is passed to the shared `copilot-agent` module which handles Copilot authentication internally.
+- Compilation uses the shared `copilot-agent.ts` module which wraps `@github/copilot-sdk`: it creates a `CopilotClient`, starts the Copilot CLI (`@github/copilot`), creates a streaming session with `environment: { cwd: workspaceFolder }`, and relays events to the renderer. The agent uses its built-in file tools to write output files directly to the workspace.
 - Model selection dropdown, dynamically populated from the Copilot API's available models list (default: `claude-opus-4.6`).
 - Max token limit is auto-filled from the selected model's `capabilities.limits.max_output_tokens` metadata.
 - Temperature slider (default: 0) for controlling output determinism.
@@ -224,7 +241,7 @@ The application uses the GitHub OAuth device flow to authenticate users and acce
 
 ### How It Works
 
-The renderer never makes network requests directly. Authentication API calls go through `window.electronAPI` IPC methods to the main process, which uses Node.js `https`. Compilation goes through the Copilot SDK: the renderer calls `window.electronAPI.copilotCompile()`, which triggers the main process to create a session via `CopilotClient`, stream `assistant.message_delta` events back to the renderer via `webContents.send('copilot:chunk')`, and return the final result.
+The renderer never makes network requests directly. Authentication API calls go through `window.electronAPI` IPC methods to the main process, which uses Node.js `https`. Compilation goes through the Copilot SDK agent: the renderer calls `window.electronAPI.copilotCompile()`, which triggers the main process to call `compileWithAgent()` from the shared module. The agent creates a session, writes files to the workspace folder via its tools, and streams events back. Text deltas are relayed via `copilot:chunk` and structured events via `copilot:event`. When the agent signals `files_changed`, the file tree refreshes automatically.
 
 ## Preview Panel
 
@@ -260,12 +277,13 @@ Accessible via gear icon in the toolbar:
 
 ## Self-Hosting Workflow
 
-The defining goal of this project is self-hosting. The workflow proceeds as follows:
+The defining goal of this project is self-hosting. The path to get there is incremental:
 
-1. **Bootstrap Phase**: A minimal, hand-written version of the tool is built — just enough to load this document, send it to the Copilot SDK, and render the result.
-2. **First Compilation**: The bootstrap version compiles this document into a more complete version of the tool.
-3. **Iteration**: The compiled version is used to edit this document and recompile, progressively improving fidelity.
-4. **Convergence**: The tool reaches a fixed point where compiling this document produces output functionally identical to the previous compilation.
+1. **Samples Phase**: Start with simple, self-contained compilations — single-file HTML apps, small CLI tools — to validate the compilation pipeline and tune the system prompt.
+2. **Multi-File Phase**: Graduate to projects that produce multiple output files (e.g., a TypeScript project with `package.json`, source files, and a build script).
+3. **Bootstrap Phase**: Use the tool to compile this document into a working version of itself.
+4. **Iteration**: The compiled version is used to edit this document and recompile, progressively improving fidelity.
+5. **Convergence**: The tool reaches a fixed point where compiling this document produces output functionally identical to the previous compilation.
 
 At convergence, the tool is fully self-hosting: it is both the product and the factory.
 
@@ -275,13 +293,27 @@ The initial bootstrap version is the TypeScript implementation under `/built`, c
 
 ### Bootstrap Requirements
 
-- TypeScript source in `/built`, compiled with esbuild to a renderer IIFE bundle (`dist/app.js`), an Electron main process CJS bundle (`dist/electron.cjs`), and a preload CJS bundle (`dist/preload.cjs`).
+- TypeScript source in `/built`, compiled with esbuild to a renderer IIFE bundle (`dist/app.js`), an Electron main process CJS bundle (`dist/electron.cjs`), a preload CJS bundle (`dist/preload.cjs`), and a CLI compile tool ESM bundle (`dist/compile-cli.mjs`).
 - An `index.html` shell in `/built` with all CSS embedded, copied to `/dist` at build time.
 - `blueprint.md` copied from `/src` to `/dist` for reference.
 - Launched via `npm start` (runs `electron .`) which starts the Electron app.
-- The Electron main process uses the Copilot SDK (`@github/copilot-sdk`) for compilation, which manages the Copilot CLI (`@github/copilot`) process automatically. Authentication IPC still uses Node.js `https` directly.
+- The Electron main process and CLI both use the shared `copilot-agent.ts` module for compilation, which wraps the Copilot SDK (`@github/copilot-sdk`) and manages the Copilot CLI (`@github/copilot`) process automatically. The agent writes files directly to the workspace folder. Authentication IPC still uses Node.js `https` directly.
 - The renderer loads `index.html` directly from disk via `loadFile()`.
 - A folder can be passed on the command line: `npm start -- /path/to/folder`.
 - No build-time framework dependencies beyond electron, esbuild, typescript, and marked.
+
+### CLI Compile Tool
+
+A standalone Node.js script (`compile-cli.ts` → `dist/compile-cli.mjs`) that compiles markdown blueprints from the command line without launching the Electron app. It uses the same shared `copilot-agent.ts` module as the Electron app.
+
+```
+npm run compile -- <input.md> [--model <model>]
+```
+
+- Requires `GITHUB_TOKEN` environment variable (GitHub personal access token with Copilot access).
+- Uses the shared `copilot-agent` module — same `initAgent()`, `compileWithAgent()`, and system prompt as the Electron app.
+- The agent writes output files directly to the workspace folder (the directory containing the input markdown file).
+- Logs agent events (tool calls, progress, usage) to stdout with `[compile]` prefix and emoji markers.
+- Default model: `claude-opus-4.6`, default timeout: 600,000ms (10 minutes).
 
 This is sufficient to compile this document into the first real version of the tool.

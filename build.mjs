@@ -47,6 +47,19 @@ await esbuild.build({
   external: ['electron'],
 });
 
+// Bundle CLI compile tool
+await esbuild.build({
+  entryPoints: ['built/compile-cli.ts'],
+  bundle: true,
+  outfile: 'dist/compile-cli.mjs',
+  format: 'esm',
+  platform: 'node',
+  target: 'node18',
+  sourcemap: true,
+  minify: false,
+  external: ['@github/copilot-sdk'],
+});
+
 // Copy HTML
 fs.copyFileSync('built/index.html', 'dist/index.html');
 

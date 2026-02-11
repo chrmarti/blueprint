@@ -34,6 +34,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeCopilotChunkListeners: () => {
     ipcRenderer.removeAllListeners('copilot:chunk');
   },
+  onCopilotEvent: (callback: (event: { type: string; message?: string; data?: any }) => void) => {
+    ipcRenderer.on('copilot:event', (_event, agentEvent) => callback(agentEvent));
+  },
+  removeCopilotEventListeners: () => {
+    ipcRenderer.removeAllListeners('copilot:event');
+  },
 
   // Window events
   onFolderOpened: (callback: (folder: string) => void) => {
@@ -43,6 +49,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onMenuOpenFolder: (callback: () => void) => {
     ipcRenderer.on('menu:openFolder', () => callback());
+  },
+  onAutoCompile: (callback: (filePath: string | null) => void) => {
+    ipcRenderer.on('command:compile', (_event, filePath: string | null) => callback(filePath));
   },
   platform: process.platform,
 });

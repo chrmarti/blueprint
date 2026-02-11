@@ -1,0 +1,8 @@
+{
+  "browser": {
+    "browserName": "electron",
+    "launchOptions": {
+      "args": ["dist/electron.cjs"]
+    }
+  }
+}

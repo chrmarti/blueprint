@@ -10,18 +10,18 @@
      Electron desktop application that opens on a local folder. Keep this file
      in /src up to date whenever the implementation changes. -->
 
-A desktop authoring environment for writing structured markdown blueprints and compiling them into executable applications using the Copilot SDK as an agent. The agent reads the markdown, reasons about the required implementation, and creates/updates files directly in the workspace folder using its tools. The output can be anything — an Electron app, a web app, a CLI tool, a library, or any other kind of software. Built with Electron, the app opens on a local folder and reads/writes files directly on disk.
+A desktop authoring environment for writing structured markdown blueprints and compiling them into executable applications using the Copilot SDK as an agent. The agent reads a `blueprint.md` file in the workspace root to understand the project's folder structure, tools, and processes, then generates code following those conventions. The output can be anything — an Electron app, a web app, a CLI tool, a library, or any other kind of software. Built with Electron, the app opens on a local folder and reads/writes files directly on disk.
 
 ## Overview
 
-Blueprint Compiler transforms markdown documents into working software. A markdown document describes an application — its architecture, components, requirements, and behavior — and the compiler turns that description into code via the Copilot SDK agent. The agent runs the Copilot CLI through the SDK's `CopilotClient`, which manages a JSON-RPC session. Within that session, the agent uses file-writing tools to create and update files directly in the workspace folder, rather than returning code as text output.
+Blueprint Compiler transforms markdown documents into working software. A markdown document describes an application — its architecture, components, requirements, and behavior — and the compiler turns that description into code via the Copilot SDK agent. The agent reads `blueprint.md` from the workspace root to learn the project's folder structure and conventions, then generates code accordingly. The agent runs the Copilot CLI through the SDK's `CopilotClient`, which manages a JSON-RPC session. Within that session, the agent uses file-writing tools to create and update files directly in the workspace folder, rather than returning code as text output.
 
 The long-term goal is **self-hosting**: this tool is itself defined by a markdown blueprint (this document), and will eventually be able to compile itself. To get there, we start with simpler samples (single-file HTML apps, small CLI tools) and progressively tackle more complex multi-file projects until the tool can produce its own runtime.
 
 ## Project Structure
 
 ```
-/src/blueprint.md     ← this document (canonical definition)
+/src/main.md          ← this document (canonical definition)
 /built/               ← TypeScript source
   electron.ts         ← Electron main process (window, menu, IPC, API proxy)
   preload.ts          ← preload script (contextBridge for IPC)
@@ -44,7 +44,7 @@ The long-term goal is **self-hosting**: this tool is itself defined by a markdow
   electron.cjs        ← bundled Electron main process (CJS)
   preload.cjs         ← bundled preload script (CJS)
   compile-cli.mjs     ← bundled CLI compile tool (ESM)
-  blueprint.md        ← copied from /src for reference
+  main.md             ← copied from /src for reference
 package.json          ← dependencies: electron, esbuild, typescript, marked, @github/copilot-sdk, @github/copilot
 tsconfig.json         ← TypeScript config (target ES2020, bundler resolution)
 build.mjs             ← build script: esbuild bundles + file copy
@@ -202,7 +202,7 @@ The compilation panel orchestrates transformation of the authored markdown into 
 
 - A **Compile** button that sends the current markdown content to the Copilot SDK agent.
 - The SDK prompt is constructed by combining:
-  - A system message defining the compiler's role: *"You are a code generator. Given a structured markdown document describing an application, produce a complete, self-contained implementation. Write the output files directly to disk using your tools. Do not wrap code in markdown fences — write actual files."*
+  - A system message defining the compiler's role: *"You are a code generator. Your working directory is the project workspace root. A blueprint.md file in the workspace root describes the project's folder structure, tools, and processes. Follow its conventions when generating code."*
   - The full markdown document as the user message.
 - The agent writes files directly to the workspace folder via its tools; the output panel shows the agent's text output (explanations, progress).
 - Structured agent events (tool starts, completions, file changes) update the status bar in real time.
@@ -295,7 +295,7 @@ The initial bootstrap version is the TypeScript implementation under `/built`, c
 
 - TypeScript source in `/built`, compiled with esbuild to a renderer IIFE bundle (`dist/app.js`), an Electron main process CJS bundle (`dist/electron.cjs`), a preload CJS bundle (`dist/preload.cjs`), and a CLI compile tool ESM bundle (`dist/compile-cli.mjs`).
 - An `index.html` shell in `/built` with all CSS embedded, copied to `/dist` at build time.
-- `blueprint.md` copied from `/src` to `/dist` for reference.
+- `main.md` copied from `/src` to `/dist` for reference.
 - Launched via `npm start` (runs `electron .`) which starts the Electron app.
 - The Electron main process and CLI both use the shared `copilot-agent.ts` module for compilation, which wraps the Copilot SDK (`@github/copilot-sdk`) and manages the Copilot CLI (`@github/copilot`) process automatically. The agent writes files directly to the workspace folder. Authentication IPC still uses Node.js `https` directly.
 - The renderer loads `index.html` directly from disk via `loadFile()`.

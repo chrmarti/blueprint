@@ -13,13 +13,7 @@ import * as fs from 'node:fs';
 // We import types only at compile time; the SDK is loaded dynamically at runtime (ESM-only).
 import type { CopilotClient as CopilotClientType } from '@github/copilot-sdk';
 
-const SYSTEM_PROMPT = `You are a code generator. Your working directory is the project workspace root. The user message contains the contents of the markdown blueprints from the src/ folder. Produce a complete, self-contained implementation and write the output files into the built/ folder (relative to the working directory) using your tools. Do not wrap code in markdown fences — write actual files.
-
-Workspace convention (paths relative to working directory):
-- src/   — markdown blueprints (input, already provided in the user message)
-- built/ — generated source code (output, written by you)
-
-Write all output files under built/. Create the built/ directory if it does not exist.`;
+const SYSTEM_PROMPT = `You are a code generator. Your working directory is the project workspace root. A blueprint.md file in the workspace root describes the project's folder structure, tools, and processes. Follow its conventions when generating code.`;
 
 export interface CompileEvent {
   type: 'log' | 'chunk' | 'tool_start' | 'tool_complete' | 'usage' | 'error' | 'done' | 'files_changed' | 'turn_start' | 'turn_end';

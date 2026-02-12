@@ -114,7 +114,7 @@ export function exportFile(): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'blueprint.md';
+  a.download = 'main.md';
   a.click();
   URL.revokeObjectURL(url);
 }

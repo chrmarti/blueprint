@@ -6,8 +6,9 @@
 // CLI tool for compiling a workspace using the Copilot SDK agent.
 // Usage: node dist/compile-cli.mjs <workspace-folder>
 //
-// The workspace folder should contain a /src directory with markdown blueprints.
-// The agent will read from /src and write generated code to /built.
+// The workspace folder should contain a blueprint.md in its root describing
+// the project's folder structure, tools, and processes. Additional .md files
+// in src/ are included as source documents if present.
 //
 // Requires a GitHub token in the GITHUB_TOKEN environment variable.
 
@@ -45,8 +46,8 @@ async function main(): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`Usage: node dist/compile-cli.mjs <workspace-folder>
 
-Compiles markdown blueprints from <workspace-folder>/src into generated code
-in <workspace-folder>/built using the Copilot agent.
+Reads blueprint.md from the workspace root and any .md files from src/ (if
+present), then compiles them into generated code using the Copilot agent.
 
 Options:
   --model <model>    Model to use (default: claude-opus-4.6)
@@ -81,16 +82,24 @@ Environment:
     process.exit(1);
   }
 
-  const srcDir = path.join(workspaceFolder, 'src');
-  if (!fs.existsSync(srcDir)) {
-    console.error(`Error: No /src directory found in ${workspaceFolder}`);
+  const blueprintPath = path.join(workspaceFolder, 'blueprint.md');
+  if (!fs.existsSync(blueprintPath)) {
+    console.error(`Error: No blueprint.md found in ${workspaceFolder}`);
     process.exit(1);
   }
 
-  const { files, content: markdown } = readMarkdownFiles(srcDir);
-  if (files.length === 0) {
-    console.error(`Error: No .md files found in ${srcDir}`);
-    process.exit(1);
+  // Read blueprint.md as the primary input
+  let markdown = fs.readFileSync(blueprintPath, 'utf-8');
+  const sourceFiles = [blueprintPath];
+
+  // Also include any .md files from src/ if the directory exists
+  const srcDir = path.join(workspaceFolder, 'src');
+  if (fs.existsSync(srcDir)) {
+    const { files, content } = readMarkdownFiles(srcDir);
+    sourceFiles.push(...files);
+    if (content) {
+      markdown += '\n\n' + content;
+    }
   }
 
   const githubToken = process.env.GITHUB_TOKEN;
@@ -103,7 +112,7 @@ Environment:
   const ts = () => new Date().toISOString().slice(11, 23);
 
   console.log(`[${ts()}] Workspace: ${workspaceFolder}`);
-  console.log(`[${ts()}] Source files: ${files.map(f => path.relative(workspaceFolder, f)).join(', ')}`);
+  console.log(`[${ts()}] Source files: ${sourceFiles.map(f => path.relative(workspaceFolder, f)).join(', ')}`);
   console.log(`[${ts()}] Total markdown: ${markdown.length} chars`);
   console.log(`[${ts()}] Model: ${model}`);
 

@@ -64,6 +64,6 @@ await esbuild.build({
 fs.copyFileSync('built/index.html', 'dist/index.html');
 
 // Copy blueprint into dist so the app can load it
-fs.copyFileSync('src/blueprint.md', 'dist/blueprint.md');
+fs.copyFileSync('src/main.md', 'dist/main.md');
 
 console.log('Build complete → dist/');

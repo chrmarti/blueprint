@@ -261,6 +261,28 @@
     #compile-status.success { color: var(--success); }
 
     /* Preview */
+    #preview-address-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      background: var(--bg-elevated);
+      border-bottom: 1px solid var(--border);
+    }
+    #preview-address-bar input {
+      flex: 1;
+      padding: 4px 8px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: var(--bg-surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      outline: none;
+    }
+    #preview-address-bar input:focus {
+      border-color: var(--accent);
+    }
     #preview-frame {
       width: 100%;
       height: 100%;
@@ -547,6 +569,9 @@
         <button class="active" data-width="100%">Desktop</button>
         <button data-width="768px">Tablet</button>
         <button data-width="375px">Mobile</button>
+      </div>
+      <div id="preview-address-bar">
+        <input id="preview-url" type="text" placeholder="Enter URL..." spellcheck="false" />
       </div>
       <div class="panel-body">
         <iframe id="preview-frame" sandbox="allow-scripts allow-modals"></iframe>

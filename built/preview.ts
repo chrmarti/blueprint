@@ -6,11 +6,21 @@
 let frameEl: HTMLIFrameElement;
 let consoleLogEl: HTMLElement;
 let viewportBtns: NodeListOf<HTMLButtonElement>;
+let addressInput: HTMLInputElement;
 
 export function initPreview(): void {
   frameEl = document.getElementById('preview-frame') as HTMLIFrameElement;
   consoleLogEl = document.getElementById('console-log') as HTMLElement;
   viewportBtns = document.querySelectorAll('#viewport-controls button') as NodeListOf<HTMLButtonElement>;
+  addressInput = document.getElementById('preview-url') as HTMLInputElement;
+
+  addressInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      let url = addressInput.value.trim();
+      if (url && !url.match(/^https?:\/\//)) url = 'http://' + url;
+      if (url) loadPreviewUrl(url);
+    }
+  });
 
   document.getElementById('preview-refresh')?.addEventListener('click', () => {
     // Re-inject current srcdoc
@@ -68,6 +78,14 @@ export function loadPreview(html: string): void {
 
   const injected = html.replace(/<head>/i, `<head>${consoleForwarder}`);
   frameEl.srcdoc = injected.includes('<head>') ? injected : consoleForwarder + html;
+}
+
+export function loadPreviewUrl(url: string): void {
+  consoleLogEl.innerHTML = '';
+  addressInput.value = url;
+  frameEl.removeAttribute('srcdoc');
+  frameEl.sandbox.add('allow-same-origin');
+  frameEl.src = url;
 }
 
 function appendLog(level: string, args: string[]): void {

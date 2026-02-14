@@ -11,12 +11,14 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 
 // We import types only at compile time; the SDK is loaded dynamically at runtime (ESM-only).
-import type { CopilotClient as CopilotClientType } from '@github/copilot-sdk';
+import type { CopilotClient as CopilotClientType, Tool } from '@github/copilot-sdk';
 
-const SYSTEM_PROMPT = `You are a code generator. Your working directory is the project workspace root. A blueprint.md file in the workspace root describes the project's folder structure, tools, and processes. Follow its conventions when generating code.`;
+const SYSTEM_PROMPT = `You are a code generator. Your working directory is the project workspace root. A blueprint.md file in the workspace root describes the project's folder structure, tools, and processes. Follow its conventions when generating code.
+
+You have a custom tool available: open_in_preview_browser. Use it to open a URL (e.g., a local dev server like http://localhost:3000) in the application's Preview panel. This is useful after starting a dev server so the user can see the running application.`;
 
 export interface CompileEvent {
-  type: 'log' | 'chunk' | 'tool_start' | 'tool_complete' | 'usage' | 'error' | 'done' | 'files_changed' | 'turn_start' | 'turn_end';
+  type: 'log' | 'chunk' | 'tool_start' | 'tool_complete' | 'usage' | 'error' | 'done' | 'files_changed' | 'turn_start' | 'turn_end' | 'preview_url';
   message?: string;
   data?: any;
 }
@@ -25,6 +27,9 @@ export type CompileEventHandler = (event: CompileEvent) => void;
 
 let copilotClient: CopilotClientType | null = null;
 let activeSessionDestroy: (() => Promise<void>) | null = null;
+
+// Lazily cached defineTool from SDK (loaded dynamically with the client)
+let _defineTool: typeof import('@github/copilot-sdk').defineTool | null = null;
 
 /**
  * Resolve the path to the copilot CLI binary.
@@ -50,7 +55,9 @@ export async function initAgent(opts: {
       copilotClient = null;
     }
 
-    const { CopilotClient } = await import('@github/copilot-sdk');
+    const sdk = await import('@github/copilot-sdk');
+    const { CopilotClient } = sdk;
+    _defineTool = sdk.defineTool;
     const cliPath = resolveCLIPath(opts.appRoot);
     const cwd = opts.workspaceFolder || process.cwd();
     console.log(`[copilot] Starting CLI from: ${cliPath}`);
@@ -95,9 +102,30 @@ export async function compileWithAgent(opts: {
   try {
     opts.onEvent({ type: 'log', message: `Creating session with model: ${opts.model}, cwd: ${opts.workspaceFolder}` });
 
+    // Build custom tools for this session
+    const customTools: Tool<any>[] = [];
+    if (_defineTool) {
+      customTools.push(_defineTool('open_in_preview_browser', {
+        description: 'Opens a URL in the application\'s Preview panel (the embedded browser on the right side of the UI). Use this after starting a dev server to show the running application to the user.',
+        parameters: {
+          type: 'object',
+          properties: {
+            url: { type: 'string', description: 'The URL to open (e.g., http://localhost:3000)' },
+          },
+          required: ['url'],
+        },
+        handler: async (args: any) => {
+          const url = args.url;
+          opts.onEvent({ type: 'preview_url', message: `Opening ${url} in preview`, data: { url } });
+          return `Opened ${url} in the Preview panel.`;
+        },
+      }));
+    }
+
     const session = await copilotClient.createSession({
       model: opts.model,
       streaming: true,
+      tools: customTools.length > 0 ? customTools : undefined,
       workingDirectory: opts.workspaceFolder,
       systemMessage: {
         mode: 'append' as const,

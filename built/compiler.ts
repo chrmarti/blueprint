@@ -27,14 +27,39 @@ export function getOutput(): string {
   return outputEl.value;
 }
 
-function appendLog(line: string): void {
-  outputEl.value += line + '\n';
+function appendLog(line: string, inline?: boolean): void {
+  if (inline) {
+    outputEl.value += line;
+  } else {
+    // Ensure log lines start on a new line
+    if (outputEl.value.length > 0 && !outputEl.value.endsWith('\n')) {
+      outputEl.value += '\n';
+    }
+    outputEl.value += line + '\n';
+  }
   outputEl.scrollTop = outputEl.scrollHeight;
 }
 
 export async function compile(markdown: string): Promise<void> {
   if (!isSignedIn()) {
     setStatus('error', 'Not signed in. Click the Sign in button in the toolbar or open Settings.');
+    return;
+  }
+
+  // If editor is empty, fall back to reading blueprint.md from workspace
+  if (!markdown.trim() && window.electronAPI) {
+    const folder = await window.electronAPI.getWorkspaceFolder();
+    if (folder) {
+      try {
+        markdown = await window.electronAPI.readFile(folder + '/blueprint.md');
+      } catch {
+        // no blueprint.md found
+      }
+    }
+  }
+
+  if (!markdown.trim()) {
+    setStatus('error', 'Nothing to compile. Open a markdown file, type instructions, or open a folder with a blueprint.md.');
     return;
   }
 
@@ -56,32 +81,44 @@ export async function compile(markdown: string): Promise<void> {
     let textOutput = '';
     window.electronAPI.onCopilotChunk((delta: string) => {
       textOutput += delta;
-      // Show text in output area (agent may also print explanations)
-      outputEl.value = textOutput;
-      outputEl.scrollTop = outputEl.scrollHeight;
+      appendLog(delta, true);
     });
 
     // Agent lifecycle events (tools, progress)
     window.electronAPI.onCopilotEvent((event: { type: string; message?: string; data?: any }) => {
       switch (event.type) {
         case 'tool_start':
+          appendLog(`🔧 ${event.message}`);
           setStatus('info', `🔧 ${event.message}`);
           break;
         case 'tool_complete':
+          appendLog(`✅ ${event.message}`);
           setStatus('info', `✅ Tool done`);
           break;
         case 'usage':
+          appendLog(`📊 ${event.message}`);
           setStatus('info', `📊 ${event.message}`);
           break;
         case 'error':
+          appendLog(`❌ ${event.message || 'Unknown error'}`);
           setStatus('error', event.message || 'Unknown error');
           break;
         case 'files_changed':
-          // Refresh the file tree when the agent writes files
           refreshTree();
           break;
         case 'done':
+          appendLog(`✨ ${event.message || 'Done'}`);
           setStatus('success', event.message || 'Done');
+          break;
+        case 'turn_start':
+        case 'turn_end':
+          appendLog(event.message || event.type);
+          break;
+        case 'log':
+          appendLog(event.message || '');
+          break;
+        default:
+          if (event.message) appendLog(event.message);
           break;
       }
     });
@@ -99,9 +136,8 @@ export async function compile(markdown: string): Promise<void> {
       return;
     }
 
-    // The agent writes files to disk — the output area shows its text/explanation
-    const output = textOutput || '(Agent wrote files to disk — check the file tree)';
-    outputEl.value = output;
+    // The agent writes files to disk — the output area already has the full log
+    const output = outputEl.value || '(Agent wrote files to disk — check the file tree)';
 
     saveOutput(output);
     pushHistory({

@@ -11,6 +11,7 @@ import { initAgent, compileWithAgent, stopAgent } from './copilot-agent';
 
 let mainWindow: BrowserWindow | null = null;
 let workspaceFolder: string | null = null;
+let lastGithubToken: string | null = null;
 
 // ── HTTPS request helper ────────────────────────────────────────────
 
@@ -71,6 +72,14 @@ function setupIPC(): void {
     if (result.canceled || result.filePaths.length === 0) return null;
     workspaceFolder = result.filePaths[0];
     mainWindow?.setTitle(`Blueprint Compiler — ${path.basename(workspaceFolder)}`);
+    // Reinitialize agent with new workspace folder so its cwd is correct
+    if (lastGithubToken) {
+      initAgent({
+        githubToken: lastGithubToken,
+        appRoot: app.getAppPath(),
+        workspaceFolder,
+      }).catch(err => console.error('[copilot] Reinit on folder change failed:', err));
+    }
     return workspaceFolder;
   });
 
@@ -167,6 +176,7 @@ function setupIPC(): void {
   // ── Copilot Agent ────────────────────────────────────────────────
 
   ipcMain.handle('copilot:init', async (_event, githubToken: string) => {
+    lastGithubToken = githubToken;
     return initAgent({
       githubToken,
       appRoot: app.getAppPath(),
@@ -181,11 +191,23 @@ function setupIPC(): void {
   }) => {
     const folder = workspaceFolder || process.cwd();
     console.log(`[copilot] Compile request — model: ${opts.model}, workspace: ${folder}`);
+
+    // Include blueprint.md content in the system prompt so the agent has
+    // project context without needing a tool call first (matches CLI behavior).
+    let systemPrompt = opts.systemPrompt;
+    const blueprintPath = path.join(folder, 'blueprint.md');
+    if (fs.existsSync(blueprintPath)) {
+      try {
+        const blueprintContent = fs.readFileSync(blueprintPath, 'utf-8');
+        systemPrompt += `\n\nBelow is the project\'s blueprint.md from the workspace root:\n\n${blueprintContent}`;
+      } catch {}
+    }
+
     return compileWithAgent({
       model: opts.model,
       markdown: opts.userPrompt,
       workspaceFolder: folder,
-      systemPrompt: opts.systemPrompt,
+      systemPrompt,
       onEvent: (event) => {
         // Relay all events to the renderer
         mainWindow?.webContents.send('copilot:event', event);

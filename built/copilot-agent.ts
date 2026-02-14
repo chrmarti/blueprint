@@ -195,18 +195,19 @@ export async function compileWithAgent(opts: {
             break;
 
           case 'tool.execution_start': {
-            // Summarize arguments for visibility
+            // Show all arguments as key=value for visibility
             let argSummary = '';
             if (event.data?.arguments) {
               try {
                 const args = typeof event.data.arguments === 'string'
                   ? JSON.parse(event.data.arguments)
                   : event.data.arguments;
-                // Show first key=value or path-like argument
-                const keys = Object.keys(args);
-                if (keys.length > 0) {
-                  const first = String(args[keys[0]]);
-                  argSummary = ` → ${first.length > 80 ? first.slice(0, 80) + '…' : first}`;
+                const parts = Object.entries(args).map(([k, v]) => {
+                  const s = String(v);
+                  return `${k}=${s.length > 120 ? s.slice(0, 120) + '…' : s}`;
+                });
+                if (parts.length > 0) {
+                  argSummary = ` → ${parts.join(', ')}`;
                 }
               } catch {}
             }

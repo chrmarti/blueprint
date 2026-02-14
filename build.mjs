@@ -63,6 +63,9 @@ await esbuild.build({
 // Copy HTML
 fs.copyFileSync('built/index.html', 'dist/index.html');
 
+// Copy xterm.js CSS
+fs.copyFileSync('node_modules/@xterm/xterm/css/xterm.css', 'dist/xterm.css');
+
 // Copy blueprint into dist so the app can load it
 fs.copyFileSync('src/main.md', 'dist/main.md');
 

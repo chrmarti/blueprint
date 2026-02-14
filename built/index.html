@@ -8,6 +8,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Blueprint Compiler</title>
+  <link rel="stylesheet" href="xterm.css">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -239,20 +240,14 @@
       white-space: nowrap;
     }
 
-    /* Compilation output */
+    /* Compilation output (xterm container) */
     #compile-output {
       width: 100%;
       height: 100%;
-      resize: none;
-      border: none;
-      outline: none;
-      padding: 16px;
-      font-family: var(--font-mono);
-      font-size: 13px;
-      line-height: 1.5;
       background: var(--bg-surface);
-      color: var(--text);
-      white-space: pre-wrap;
+    }
+    #compile-output .xterm {
+      padding: 8px;
     }
 
     /* Compile status */
@@ -522,10 +517,11 @@
       <div class="panel-header">
         <span>Compilation Output</span>
         <button id="save-output-btn" title="Save output to file">&#128190;</button>
+        <button id="toggle-preview-btn" title="Toggle preview panel">&#9654;</button>
         <button id="history-btn" title="History">&#128337;</button>
       </div>
       <div class="panel-body">
-        <textarea id="compile-output" readonly placeholder="Compiled output will appear here..."></textarea>
+        <div id="compile-output"></div>
       </div>
       <div id="compile-status">Ready</div>
       <!-- History drawer -->
@@ -541,7 +537,7 @@
     <div class="drag-handle" data-left="compile-panel" data-right="preview-panel"></div>
 
     <!-- Preview Panel -->
-    <div class="panel" id="preview-panel" style="flex: 1;">
+    <div class="panel collapsed" id="preview-panel" style="flex: none; width: 0; min-width: 0; overflow: hidden;">
       <div class="panel-header">
         <span>Preview</span>
         <button id="preview-refresh" title="Refresh">&#8635;</button>

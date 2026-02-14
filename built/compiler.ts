@@ -6,38 +6,90 @@
 import { loadSettings, saveOutput, pushHistory } from './storage';
 import { isSignedIn } from './auth';
 import { refreshTree } from './files';
+import { Terminal } from '@xterm/xterm';
 
 const SYSTEM_PROMPT = `You are a code generator. Your working directory is the project workspace root. A blueprint.md file in the workspace root describes the project's folder structure, tools, and processes. Follow its conventions when generating code.`;
 
-let outputEl: HTMLTextAreaElement;
+let term: Terminal;
+let outputContainerEl: HTMLElement;
 let statusEl: HTMLElement;
+let plainTextBuffer = '';
 let onCompiled: (html: string) => void = () => {};
 
+function getTermTheme(): { background: string; foreground: string; cursor: string } {
+  const style = getComputedStyle(document.documentElement);
+  return {
+    background: style.getPropertyValue('--bg-surface').trim() || '#252536',
+    foreground: style.getPropertyValue('--text').trim() || '#cdd6f4',
+    cursor: style.getPropertyValue('--text-muted').trim() || '#888caa',
+  };
+}
+
 export function initCompiler(opts: { onCompiled: (html: string) => void }): void {
-  outputEl = document.getElementById('compile-output') as HTMLTextAreaElement;
+  outputContainerEl = document.getElementById('compile-output') as HTMLElement;
   statusEl = document.getElementById('compile-status') as HTMLElement;
   onCompiled = opts.onCompiled;
+
+  const colors = getTermTheme();
+  term = new Terminal({
+    convertEol: true,
+    scrollback: 10000,
+    fontSize: 13,
+    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
+    theme: {
+      background: colors.background,
+      foreground: colors.foreground,
+      cursor: colors.cursor,
+    },
+    cursorStyle: 'bar',
+    cursorBlink: false,
+    disableStdin: true,
+  });
+  term.open(outputContainerEl);
+
+  // Fit terminal to container on resize
+  const fit = () => {
+    const dims = outputContainerEl.getBoundingClientRect();
+    if (dims.width > 0 && dims.height > 0) {
+      const cellWidth = term.options.fontSize! * 0.6;
+      const cellHeight = (term.options.fontSize! || 13) * 1.2;
+      const cols = Math.max(20, Math.floor((dims.width - 16) / cellWidth));
+      const rows = Math.max(5, Math.floor((dims.height - 16) / cellHeight));
+      term.resize(cols, rows);
+    }
+  };
+  fit();
+  new ResizeObserver(fit).observe(outputContainerEl);
 }
 
 export function setOutput(text: string): void {
-  outputEl.value = text;
+  plainTextBuffer = text;
+  term.clear();
+  term.write(text);
 }
 
 export function getOutput(): string {
-  return outputEl.value;
+  return plainTextBuffer;
+}
+
+export function updateTermTheme(): void {
+  if (!term) return;
+  const colors = getTermTheme();
+  term.options.theme = {
+    background: colors.background,
+    foreground: colors.foreground,
+    cursor: colors.cursor,
+  };
 }
 
 function appendLog(line: string, inline?: boolean): void {
   if (inline) {
-    outputEl.value += line;
+    plainTextBuffer += line;
+    term.write(line);
   } else {
-    // Ensure log lines start on a new line
-    if (outputEl.value.length > 0 && !outputEl.value.endsWith('\n')) {
-      outputEl.value += '\n';
-    }
-    outputEl.value += line + '\n';
+    plainTextBuffer += line + '\n';
+    term.writeln(line);
   }
-  outputEl.scrollTop = outputEl.scrollHeight;
 }
 
 export async function compile(markdown: string): Promise<void> {
@@ -65,7 +117,8 @@ export async function compile(markdown: string): Promise<void> {
 
   const settings = loadSettings();
   setStatus('info', 'Compiling...');
-  outputEl.value = '';
+  term.clear();
+  plainTextBuffer = '';
 
   if (!window.electronAPI) {
     setStatus('error', 'Electron API not available');
@@ -137,7 +190,7 @@ export async function compile(markdown: string): Promise<void> {
     }
 
     // The agent writes files to disk — the output area already has the full log
-    const output = outputEl.value || '(Agent wrote files to disk — check the file tree)';
+    const output = plainTextBuffer || '(Agent wrote files to disk — check the file tree)';
 
     saveOutput(output);
     pushHistory({

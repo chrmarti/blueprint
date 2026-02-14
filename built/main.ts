@@ -4,8 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { initEditor, setContent, getContent, setFontSize } from './editor';
-import { initCompiler, compile, setOutput, getOutput, saveOutputToFile } from './compiler';
-import { initPreview, loadPreview } from './preview';
+import { initCompiler, compile, setOutput, getOutput, saveOutputToFile, updateTermTheme } from './compiler';
+import { initPreview } from './preview';
 import { initLayout } from './layout';
 import { initSettings, applyTheme, updateAuthUI } from './settings';
 import { loadOutput, loadSettings, saveSettings } from './storage';
@@ -32,7 +32,7 @@ async function boot(): Promise<void> {
   });
 
   initCompiler({
-    onCompiled: (html: string) => loadPreview(html),
+    onCompiled: (_html: string) => {},
   });
 
   initPreview();
@@ -53,7 +53,6 @@ async function boot(): Promise<void> {
   const output = loadOutput();
   if (output) {
     setOutput(output);
-    loadPreview(output);
   }
 
   // If Electron provided a workspace folder on launch, the file browser
@@ -98,12 +97,36 @@ async function boot(): Promise<void> {
     saveOutputToFile();
   });
 
+  // Toolbar: toggle preview panel
+  document.getElementById('toggle-preview-btn')?.addEventListener('click', () => {
+    const panel = document.getElementById('preview-panel')!;
+    const btn = document.getElementById('toggle-preview-btn')!;
+    if (panel.classList.contains('collapsed')) {
+      panel.classList.remove('collapsed');
+      panel.style.width = '';
+      panel.style.minWidth = '';
+      panel.style.overflow = '';
+      panel.style.flex = '1';
+      btn.innerHTML = '&#9654;'; // ▶ (collapse)
+      btn.title = 'Hide preview panel';
+    } else {
+      panel.classList.add('collapsed');
+      panel.style.flex = 'none';
+      panel.style.width = '0';
+      panel.style.minWidth = '0';
+      panel.style.overflow = 'hidden';
+      btn.innerHTML = '&#9664;'; // ◀ (expand)
+      btn.title = 'Show preview panel';
+    }
+  });
+
   // Toolbar: theme toggle
   document.getElementById('theme-toggle')?.addEventListener('click', () => {
     const s = loadSettings();
     s.theme = s.theme === 'dark' ? 'light' : 'dark';
     saveSettings(s);
     applyTheme(s.theme);
+    updateTermTheme();
   });
 
   // Keyboard shortcuts

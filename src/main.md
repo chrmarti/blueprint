@@ -45,7 +45,7 @@ The long-term goal is **self-hosting**: this tool is itself defined by a markdow
   preload.cjs         ← bundled preload script (CJS)
   compile-cli.mjs     ← bundled CLI compile tool (ESM)
   main.md             ← copied from /src for reference
-package.json          ← dependencies: electron, esbuild, typescript, marked, @github/copilot-sdk, @github/copilot
+package.json          ← dependencies: electron, esbuild, typescript, marked, @xterm/xterm, @github/copilot-sdk, @github/copilot
 tsconfig.json         ← TypeScript config (target ES2020, bundler resolution)
 build.mjs             ← build script: esbuild bundles + file copy
 ```
@@ -63,6 +63,7 @@ The application is an Electron desktop app composed of three primary regions in 
 - **Desktop Runtime**: Electron (main process, preload, renderer).
 - **Frontend**: TypeScript compiled via esbuild into a single IIFE bundle, no framework dependencies.
 - **Markdown Engine**: `marked` (npm) for rendering and structural analysis.
+- **Terminal Output**: `@xterm/xterm` (xterm.js) for rendering compilation output with full ANSI escape code support (colors, formatting from the Copilot CLI).
 - **Compilation Backend**: GitHub Copilot SDK (`@github/copilot-sdk`), which communicates with the Copilot CLI (`@github/copilot`) via JSON-RPC. The SDK handles authentication, model selection, and agent tool execution. A shared module (`copilot-agent.ts`) encapsulates the SDK lifecycle and is used by both the Electron main process and the standalone CLI. The agent creates/updates files directly in the workspace folder via its built-in tools. Events (tool calls, progress, errors) are relayed to UIs via typed callbacks.
 - **File System**: Electron IPC (`ipcMain.handle` / `ipcRenderer.invoke`) for reading directories, reading files, writing files, and showing native dialogs.
 - **Runtime Sandbox**: An iframe with `srcdoc` and `sandbox="allow-scripts allow-modals"` for rendering and executing compiled output in isolation.
@@ -204,8 +205,8 @@ The compilation panel orchestrates transformation of the authored markdown into 
 - The SDK prompt is constructed by combining:
   - A system message defining the compiler's role: *"You are a code generator. Your working directory is the project workspace root. A blueprint.md file in the workspace root describes the project's folder structure, tools, and processes. Follow its conventions when generating code."*
   - The full markdown document as the user message.
-- The agent writes files directly to the workspace folder via its tools; the output panel shows the agent's text output (explanations, progress).
-- Structured agent events (tool starts, completions, file changes) update the status bar in real time.
+- The agent writes files directly to the workspace folder via its tools; the output panel uses an xterm.js terminal to display agent output with full ANSI escape code rendering (colors, formatting from the Copilot CLI). All agent events (tool calls, usage, turns, errors) are interleaved with streamed text in the terminal.
+- Structured agent events (tool starts with all arguments shown as key=value, completions, file changes) update both the terminal log and the status bar in real time.
 - The file tree auto-refreshes when the agent signals `files_changed`.
 - An **errors** section that surfaces any SDK invocation failures or malformed output.
 - A **history** drawer listing previous compilations with timestamps, allowing rollback.
@@ -245,10 +246,11 @@ The renderer never makes network requests directly. Authentication API calls go 
 
 ## Preview Panel
 
-The preview panel renders the compiled output as a live, interactive application.
+The preview panel renders compiled output as a live, interactive application. It is collapsed by default and can be expanded via a toggle button (▶) in the compilation panel header.
 
 ### Requirements
 
+- Collapsed by default (zero width, hidden). A toggle button in the compilation panel header expands/collapses it.
 - An iframe with `srcdoc` set to the compiled HTML output.
 - Console forwarding script injected into `<head>`: intercepts `console.log`, `console.warn`, `console.error` and forwards via `parent.postMessage`.
 - A **Refresh** button to re-inject the latest compiled output.
@@ -300,7 +302,7 @@ The initial bootstrap version is the TypeScript implementation under `/built`, c
 - The Electron main process and CLI both use the shared `copilot-agent.ts` module for compilation, which wraps the Copilot SDK (`@github/copilot-sdk`) and manages the Copilot CLI (`@github/copilot`) process automatically. The agent writes files directly to the workspace folder. Authentication IPC still uses Node.js `https` directly.
 - The renderer loads `index.html` directly from disk via `loadFile()`.
 - A folder can be passed on the command line: `npm start -- /path/to/folder`.
-- No build-time framework dependencies beyond electron, esbuild, typescript, and marked.
+- No build-time framework dependencies beyond electron, esbuild, typescript, marked, and @xterm/xterm.
 
 ### CLI Compile Tool
 

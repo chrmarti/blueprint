@@ -53,5 +53,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onAutoCompile: (callback: (filePath: string | null) => void) => {
     ipcRenderer.on('command:compile', (_event, filePath: string | null) => callback(filePath));
   },
+  gitStatus: () => ipcRenderer.invoke('git:status'),
   platform: process.platform,
 });

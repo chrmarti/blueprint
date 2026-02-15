@@ -11,9 +11,9 @@ interface DirEntry {
 }
 
 let fileTreeEl: HTMLElement;
-let outlineEl: HTMLElement;
+let gitStatusEl: HTMLElement;
 let filesTabBtn: HTMLButtonElement;
-let outlineTabBtn: HTMLButtonElement;
+let gitTabBtn: HTMLButtonElement;
 
 let workspaceFolder: string | null = null;
 let currentFilePath: string | null = null;
@@ -26,14 +26,14 @@ export function initFileBrowser(opts: {
   onFileOpen: (filePath: string, content: string) => void;
 }): void {
   fileTreeEl = document.getElementById('file-tree') as HTMLElement;
-  outlineEl = document.getElementById('outline') as HTMLElement;
+  gitStatusEl = document.getElementById('git-status') as HTMLElement;
   filesTabBtn = document.getElementById('sidebar-files') as HTMLButtonElement;
-  outlineTabBtn = document.getElementById('sidebar-outline') as HTMLButtonElement;
+  gitTabBtn = document.getElementById('sidebar-git') as HTMLButtonElement;
 
   onFileOpen = opts.onFileOpen;
 
   filesTabBtn?.addEventListener('click', () => showSidebarTab('files'));
-  outlineTabBtn?.addEventListener('click', () => showSidebarTab('outline'));
+  gitTabBtn?.addEventListener('click', () => showSidebarTab('git'));
 
   document.getElementById('new-file-btn')?.addEventListener('click', () => createNewEntry('file'));
   document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewEntry('folder'));
@@ -45,17 +45,67 @@ export function initFileBrowser(opts: {
   }
 }
 
-function showSidebarTab(tab: 'files' | 'outline'): void {
+function showSidebarTab(tab: 'files' | 'git'): void {
   if (tab === 'files') {
     fileTreeEl.style.display = '';
-    outlineEl.style.display = 'none';
+    gitStatusEl.style.display = 'none';
     filesTabBtn.classList.add('active');
-    outlineTabBtn.classList.remove('active');
+    gitTabBtn.classList.remove('active');
   } else {
     fileTreeEl.style.display = 'none';
-    outlineEl.style.display = '';
-    outlineTabBtn.classList.add('active');
+    gitStatusEl.style.display = '';
+    gitTabBtn.classList.add('active');
     filesTabBtn.classList.remove('active');
+    refreshGitStatus();
+  }
+}
+
+export async function refreshGitStatus(): Promise<void> {
+  if (!window.electronAPI?.gitStatus) return;
+  const entries: { status: string; file: string }[] = await window.electronAPI.gitStatus();
+  gitStatusEl.innerHTML = '';
+  if (entries.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'git-empty';
+    empty.textContent = 'No changes';
+    gitStatusEl.appendChild(empty);
+    return;
+  }
+  for (const entry of entries) {
+    const div = document.createElement('div');
+    div.className = 'git-entry';
+
+    const badge = document.createElement('span');
+    badge.className = 'git-badge';
+    const s = entry.status.trim();
+    if (s === 'M' || s === 'MM') {
+      badge.textContent = 'M';
+      badge.classList.add('git-modified');
+    } else if (s === 'A') {
+      badge.textContent = 'A';
+      badge.classList.add('git-added');
+    } else if (s === 'D') {
+      badge.textContent = 'D';
+      badge.classList.add('git-deleted');
+    } else if (s === '??') {
+      badge.textContent = '?';
+      badge.classList.add('git-untracked');
+    } else if (s === 'R') {
+      badge.textContent = 'R';
+      badge.classList.add('git-modified');
+    } else {
+      badge.textContent = s;
+      badge.classList.add('git-modified');
+    }
+
+    const name = document.createElement('span');
+    name.className = 'file-name';
+    name.textContent = entry.file;
+    name.title = entry.file;
+
+    div.appendChild(badge);
+    div.appendChild(name);
+    gitStatusEl.appendChild(div);
   }
 }
 

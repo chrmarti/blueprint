@@ -6,6 +6,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { execFile } from 'node:child_process';
 import https from 'node:https';
 import { initAgent, compileWithAgent, stopAgent } from './copilot-agent';
 
@@ -230,6 +231,22 @@ function setupIPC(): void {
 
   ipcMain.handle('copilot:stop', async () => {
     await stopAgent();
+  });
+
+  // ── Git ──────────────────────────────────────────────────────────
+
+  ipcMain.handle('git:status', async () => {
+    if (!workspaceFolder) return [];
+    return new Promise<{ status: string; file: string }[]>((resolve) => {
+      execFile('git', ['status', '--porcelain'], { cwd: workspaceFolder! }, (err, stdout) => {
+        if (err) { resolve([]); return; }
+        const entries = stdout.split('\n').filter(Boolean).map(line => ({
+          status: line.slice(0, 2),
+          file: line.slice(3),
+        }));
+        resolve(entries);
+      });
+    });
   });
 }
 

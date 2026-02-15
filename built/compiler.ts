@@ -7,6 +7,7 @@ import { loadSettings, saveOutput, pushHistory } from './storage';
 import { isSignedIn } from './auth';
 import { refreshTree } from './files';
 import { loadPreviewUrl } from './preview';
+import { showBrowserTab } from './editor';
 import { Terminal } from '@xterm/xterm';
 
 const SYSTEM_PROMPT = `You are a code generator. Your working directory is the project workspace root. A blueprint.md file in the workspace root describes the project's folder structure, tools, and processes. Follow its conventions when generating code.`;
@@ -161,18 +162,7 @@ export async function compile(markdown: string): Promise<void> {
           const url = event.data?.url;
           if (url) {
             loadPreviewUrl(url);
-            // Reveal preview panel if collapsed
-            const panel = document.getElementById('preview-panel')!;
-            const btn = document.getElementById('toggle-preview-btn')!;
-            if (panel.classList.contains('collapsed')) {
-              panel.classList.remove('collapsed');
-              panel.style.width = '';
-              panel.style.minWidth = '';
-              panel.style.overflow = '';
-              panel.style.flex = '1';
-              btn.innerHTML = '&#9654;';
-              btn.title = 'Hide preview panel';
-            }
+            showBrowserTab();
           }
           break;
         }

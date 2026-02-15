@@ -97,29 +97,6 @@ async function boot(): Promise<void> {
     saveOutputToFile();
   });
 
-  // Toolbar: toggle preview panel
-  document.getElementById('toggle-preview-btn')?.addEventListener('click', () => {
-    const panel = document.getElementById('preview-panel')!;
-    const btn = document.getElementById('toggle-preview-btn')!;
-    if (panel.classList.contains('collapsed')) {
-      panel.classList.remove('collapsed');
-      panel.style.width = '';
-      panel.style.minWidth = '';
-      panel.style.overflow = '';
-      panel.style.flex = '1';
-      btn.innerHTML = '&#9654;'; // ▶ (collapse)
-      btn.title = 'Hide preview panel';
-    } else {
-      panel.classList.add('collapsed');
-      panel.style.flex = 'none';
-      panel.style.width = '0';
-      panel.style.minWidth = '0';
-      panel.style.overflow = 'hidden';
-      btn.innerHTML = '&#9664;'; // ◀ (expand)
-      btn.title = 'Show preview panel';
-    }
-  });
-
   // Toolbar: theme toggle
   document.getElementById('theme-toggle')?.addEventListener('click', () => {
     const s = loadSettings();
@@ -142,8 +119,8 @@ async function boot(): Promise<void> {
     }
     if (mod && e.key === 'p') {
       e.preventDefault();
-      const tabPreview = document.getElementById('tab-preview') as HTMLButtonElement;
-      tabPreview.click();
+      const tabBrowser = document.getElementById('tab-browser') as HTMLButtonElement;
+      tabBrowser.click();
     }
   });
 }

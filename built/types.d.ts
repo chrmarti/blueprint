@@ -45,6 +45,7 @@ interface ElectronAPI {
   onFolderOpened(callback: (folder: string) => void): void;
   onMenuOpenFolder(callback: () => void): void;
   onAutoCompile(callback: (filePath: string | null) => void): void;
+  gitStatus(): Promise<{ status: string; file: string }[]>;
   platform: string;
 }
 

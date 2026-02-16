@@ -8,7 +8,7 @@
 <!-- This document is the canonical definition of the application. The TypeScript
      implementation lives under /built, compiles to /dist, and runs as an
      Electron desktop application that opens on a local folder. Keep this file
-     in /src up to date whenever the implementation changes. -->
+     in /blueprint up to date whenever the implementation changes. -->
 
 A desktop authoring environment for writing structured markdown blueprints and compiling them into executable applications using the Copilot SDK as an agent. The agent reads a `blueprint.md` file in the workspace root to understand the project's folder structure, tools, and processes, then generates code following those conventions. The output can be anything — an Electron app, a web app, a CLI tool, a library, or any other kind of software. Built with Electron, the app opens on a local folder and reads/writes files directly on disk.
 
@@ -21,7 +21,7 @@ The long-term goal is **self-hosting**: this tool is itself defined by a markdow
 ## Project Structure
 
 ```
-/src/main.md          ← this document (canonical definition)
+/blueprint/main.md    ← this document (canonical definition)
 /built/               ← TypeScript source
   electron.ts         ← Electron main process (window, menu, IPC, API proxy)
   preload.ts          ← preload script (contextBridge for IPC)
@@ -44,7 +44,7 @@ The long-term goal is **self-hosting**: this tool is itself defined by a markdow
   electron.cjs        ← bundled Electron main process (CJS)
   preload.cjs         ← bundled preload script (CJS)
   compile-cli.mjs     ← bundled CLI compile tool (ESM)
-  main.md             ← copied from /src for reference
+  main.md             ← copied from /blueprint for reference
 package.json          ← dependencies: electron, esbuild, typescript, marked, @xterm/xterm, @github/copilot-sdk, @github/copilot
 tsconfig.json         ← TypeScript config (target ES2020, bundler resolution)
 build.mjs             ← build script: esbuild bundles + file copy
@@ -297,7 +297,7 @@ The initial bootstrap version is the TypeScript implementation under `/built`, c
 
 - TypeScript source in `/built`, compiled with esbuild to a renderer IIFE bundle (`dist/app.js`), an Electron main process CJS bundle (`dist/electron.cjs`), a preload CJS bundle (`dist/preload.cjs`), and a CLI compile tool ESM bundle (`dist/compile-cli.mjs`).
 - An `index.html` shell in `/built` with all CSS embedded, copied to `/dist` at build time.
-- `main.md` copied from `/src` to `/dist` for reference.
+- `main.md` copied from `/blueprint` to `/dist` for reference.
 - Launched via `npm start` (runs `electron .`) which starts the Electron app.
 - The Electron main process and CLI both use the shared `copilot-agent.ts` module for compilation, which wraps the Copilot SDK (`@github/copilot-sdk`) and manages the Copilot CLI (`@github/copilot`) process automatically. The agent writes files directly to the workspace folder. Authentication IPC still uses Node.js `https` directly.
 - The renderer loads `index.html` directly from disk via `loadFile()`.

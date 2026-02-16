@@ -8,7 +8,7 @@
 //
 // The workspace folder should contain a blueprint.md in its root describing
 // the project's folder structure, tools, and processes. Additional .md files
-// in src/ are included as source documents if present.
+// in blueprint/ are included as source documents if present.
 //
 // Requires a GitHub token in the GITHUB_TOKEN environment variable.
 
@@ -31,7 +31,7 @@ function readMarkdownFiles(dir: string): { files: string[]; content: string } {
         files.push(full);
         const rel = path.relative(dir, full);
         const text = fs.readFileSync(full, 'utf-8');
-        content += `\n\n<!-- file: src/${rel} -->\n\n${text}`;
+        content += `\n\n<!-- file: blueprint/${rel} -->\n\n${text}`;
       }
     }
   }
@@ -46,7 +46,7 @@ async function main(): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`Usage: node dist/compile-cli.mjs <workspace-folder>
 
-Reads blueprint.md from the workspace root and any .md files from src/ (if
+Reads blueprint.md from the workspace root and any .md files from blueprint/ (if
 present), then compiles them into generated code using the Copilot agent.
 
 Options:
@@ -92,8 +92,8 @@ Environment:
   let markdown = fs.readFileSync(blueprintPath, 'utf-8');
   const sourceFiles = [blueprintPath];
 
-  // Also include any .md files from src/ if the directory exists
-  const srcDir = path.join(workspaceFolder, 'src');
+  // Also include any .md files from blueprint/ if the directory exists
+  const srcDir = path.join(workspaceFolder, 'blueprint');
   if (fs.existsSync(srcDir)) {
     const { files, content } = readMarkdownFiles(srcDir);
     sourceFiles.push(...files);

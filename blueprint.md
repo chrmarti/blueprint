@@ -8,7 +8,7 @@
 ## Folder Structure
 
 ```
-src/          ← design documents and static assets
+blueprint/    ← design documents and static assets
 built/        ← TypeScript source files and HTML
 dist/         ← build output (bundled JS, copied assets) — not checked in
 ```

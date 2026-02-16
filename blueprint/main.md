@@ -26,14 +26,14 @@ The long-term goal is **self-hosting**: this tool is itself defined by a markdow
   electron.ts         ← Electron main process (window, menu, IPC, API proxy)
   preload.ts          ← preload script (contextBridge for IPC)
   main.ts             ← renderer entry point, boots all modules
-  editor.ts           ← editor panel (textarea, outline, markdown preview)
-  compiler.ts         ← compilation panel (agent events, streaming)
+  editor.ts           ← editor panel (Edit and Browser tabs)
+  compiler.ts         ← output panel (agent events, streaming)
   copilot-agent.ts    ← shared Copilot agent module (used by Electron & CLI)
-  preview.ts          ← preview panel (iframe sandbox, console forwarding)
+  preview.ts          ← browser tab (iframe, address bar, URL navigation)
   layout.ts           ← drag-handle resizable three-column layout
   settings.ts         ← settings modal, history drawer, theme, import/export
   storage.ts          ← localStorage persistence layer (settings, history)
-  files.ts            ← file browser module (tree view, open/save via IPC)
+  files.ts            ← sidebar module (Files and Git tabs, tree view, open/save via IPC)
   auth.ts             ← GitHub OAuth device flow + Copilot token management
   compile-cli.ts      ← standalone CLI compile tool (no Electron)
   types.d.ts          ← global type declarations (ElectronAPI)
@@ -54,9 +54,9 @@ build.mjs             ← build script: esbuild bundles + file copy
 
 The application is an Electron desktop app composed of three primary regions in a single window:
 
-1. **Editor Panel** — A markdown editor with a file browser sidebar, outline navigation, live preview, and direct disk I/O.
-2. **Compilation Panel** — Controls for invoking the Copilot SDK to transform the markdown into source code, with streaming output, error display, and save-to-file.
-3. **Preview Panel** — A live-rendered view of the compiled application running in a sandboxed iframe.
+1. **Sidebar** (left) — A file browser with **Files** and **Git** tabs, plus toolbar actions for creating/deleting files and folders.
+2. **Editor Panel** (center) — A tabbed view with **Edit** (markdown textarea) and **Browser** (embedded iframe with address bar) tabs. Direct disk I/O with autosave.
+3. **Output Panel** (right) — Controls for invoking the Copilot SDK agent, with streaming terminal output (xterm.js), error display, and save-to-file.
 
 ### Technology Stack
 
@@ -137,7 +137,7 @@ The preload script (`preload.ts`) uses `contextBridge.exposeInMainWorld` to expo
 
 ## File Browser
 
-The editor panel's sidebar has two tabs: **Files** and **Outline**.
+The sidebar has two tabs: **Files** and **Git**.
 
 ### Files Tab
 
@@ -158,10 +158,9 @@ The sidebar tab bar includes action buttons for file management:
 - **New Folder** (📁) — Creates a new folder in the selected directory. Shows an inline text input; on commit, creates the folder (via a `.keep` placeholder file) and expands it.
 - **Delete** (🗑️) — Deletes the selected directory or the currently open file. Shows a `confirm()` dialog describing what will be deleted (including "and all its contents" for folders). On confirmation, removes the entry via `electronAPI.deleteEntry`, clears the editor if the deleted path was open, and refreshes the tree.
 
-### Outline Tab
+### Git Tab
 
-- Derived from heading structure (H1–H3) of the currently open markdown file.
-- Click-to-navigate scrolls the editor to the corresponding heading.
+See [git.md](git.md) for details.
 
 ### File Operations
 
@@ -173,16 +172,15 @@ The sidebar tab bar includes action buttons for file management:
 
 ## Editor Panel
 
-The editor is a full-featured markdown authoring surface.
+The editor is a full-featured markdown authoring surface with two tabs: **Edit** and **Browser**.
 
 ### Requirements
 
-- Monospaced text input area.
-- Live-rendered markdown preview in a tabbed view (Edit / Preview tabs).
-- A document outline sidebar derived from heading structure, supporting click-to-navigate.
+- **Edit tab**: Monospaced text input area for editing markdown and other files.
+- **Browser tab**: An embedded iframe with an address bar for navigating to URLs and previewing web content. The address bar auto-prepends `http://` if no protocol is specified. Can be activated programmatically by the `open_in_preview_browser` agent tool.
 - Autosave to disk on every keystroke with debounce (500ms).
 - Import and export of `.md` files via drag-and-drop and file picker.
-- Keyboard shortcuts: `Cmd/Ctrl+S` to save, `Cmd/Ctrl+B` to compile, `Cmd/Ctrl+P` to toggle preview.
+- Keyboard shortcuts: `Cmd/Ctrl+S` to save, `Cmd/Ctrl+B` to compile.
 
 ### Document Structure Conventions
 
@@ -195,9 +193,9 @@ Authored markdown follows a set of conventions the compiler understands:
 - **Bulleted lists** under a heading describe constraints, rules, or acceptance criteria.
 - **Blockquotes (`>`)** provide additional context or rationale for the compiler but do not map to code.
 
-## Compilation Panel
+## Output Panel
 
-The compilation panel orchestrates transformation of the authored markdown into runnable source code.
+The output panel orchestrates transformation of the authored markdown into runnable source code.
 
 ### Requirements
 
@@ -244,25 +242,23 @@ The application uses the GitHub OAuth device flow to authenticate users and acce
 
 The renderer never makes network requests directly. Authentication API calls go through `window.electronAPI` IPC methods to the main process, which uses Node.js `https`. Compilation goes through the Copilot SDK agent: the renderer calls `window.electronAPI.copilotCompile()`, which triggers the main process to call `compileWithAgent()` from the shared module. The agent creates a session, writes files to the workspace folder via its tools, and streams events back. Text deltas are relayed via `copilot:chunk` and structured events via `copilot:event`. When the agent signals `files_changed`, the file tree refreshes automatically.
 
-## Preview Panel
+## Browser Tab
 
-The preview panel renders compiled output as a live, interactive application. It is collapsed by default and can be expanded via a toggle button (▶) in the compilation panel header.
+The Browser tab in the Editor panel provides an embedded web browser for previewing content and navigating to URLs.
 
 ### Requirements
 
-- Collapsed by default (zero width, hidden). A toggle button in the compilation panel header expands/collapses it.
-- An iframe with `srcdoc` set to the compiled HTML output.
-- Console forwarding script injected into `<head>`: intercepts `console.log`, `console.warn`, `console.error` and forwards via `parent.postMessage`.
-- A **Refresh** button to re-inject the latest compiled output.
-- A toggle to open the preview in a new browser tab.
-- Console messages displayed in a collapsible log viewer below the preview, color-coded by level.
-- A dimension control to simulate common viewport sizes (mobile 375px, tablet 768px, desktop 100%).
+- An iframe that can load URLs via `src` or render HTML via `srcdoc`.
+- An **address bar** at the top for navigating to URLs. Typing a URL and pressing Enter loads it in the iframe. If no protocol is specified, `http://` is prepended automatically.
+- The address bar can be set programmatically by the `open_in_preview_browser` agent tool, which also switches to the Browser tab.
+- Console forwarding script injected into `<head>` for `srcdoc` content: intercepts `console.log`, `console.warn`, `console.error` and forwards via `parent.postMessage`.
 
 ## Layout and Interaction
 
 ### Panel Arrangement
 
-- Default layout: three-column, resizable via drag handles.
+- Default layout: three-column, resizable via drag handles. Left to right: **Sidebar** (Files and Git tabs), **Editor** (Edit and Browser tabs, center), **Output** (right).
+- On window resize, the center Editor panel grows and shrinks horizontally while the left (Sidebar) and right (Output) panels remain fixed in width.
 - Collapsible panels: each panel can be minimized to a labeled tab on the edge of the viewport.
 - A top toolbar contains: application title, open-folder button, folder name, compile button, layout toggles, and a settings gear icon.
 

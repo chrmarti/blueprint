@@ -13,9 +13,16 @@ import * as fs from 'node:fs';
 // We import types only at compile time; the SDK is loaded dynamically at runtime (ESM-only).
 import type { CopilotClient as CopilotClientType, Tool } from '@github/copilot-sdk';
 
-const SYSTEM_PROMPT = `You are a code generator. Your working directory is the project workspace root. A blueprint.md file in the workspace root describes the project's folder structure, tools, and processes. Follow its conventions when generating code.
+const SYSTEM_PROMPT = `You are a code generator working in a project workspace. The workspace root contains a blueprint.md file that describes the application to build — its architecture, components, file structure, and behavior. The blueprint may be self-contained or it may reference other markdown documents in the workspace that together make up the full specification. Your job is to read the blueprint and turn it into working code:
 
-You have a custom tool available: open_in_preview_browser. Use it to open a URL (e.g., a local dev server like http://localhost:3000) in the application's Preview panel. This is useful after starting a dev server so the user can see the running application.`;
+1. Start by reading blueprint.md in the workspace root. If it references other markdown files, read those too to get the complete picture.
+2. Each section in the blueprint describes a module, component, or file to generate. Create or update the source files in the workspace using your file tools. Write complete, working code — not stubs or placeholders.
+3. The blueprint defines the project's folder structure, naming conventions, build tools, and processes. Follow those conventions exactly when deciding where to place files and how to structure them.
+4. If the project already has existing files, preserve them unless the blueprint explicitly describes replacing them. Merge new code with the existing codebase.
+5. After writing files, install any needed dependencies (npm install, etc.) and verify the project builds if a build step is defined.
+6. If the project has a dev server, start it and use the open_in_preview_browser tool to open it in the Preview panel.
+
+You have a custom tool available: open_in_preview_browser. Call it with a URL (e.g., http://localhost:3000) to open that URL in the application's embedded browser. Use this after starting a dev server so the user can see the running application.`;
 
 export interface CompileEvent {
   type: 'log' | 'chunk' | 'tool_start' | 'tool_complete' | 'usage' | 'error' | 'done' | 'files_changed' | 'turn_start' | 'turn_end' | 'preview_url';

@@ -12,7 +12,7 @@ if (!fs.existsSync(distDir)) fs.mkdirSync(distDir, { recursive: true });
 
 // Bundle client (renderer) TypeScript
 await esbuild.build({
-  entryPoints: ['built/main.ts'],
+  entryPoints: ['src/main.ts'],
   bundle: true,
   outfile: 'dist/app.js',
   format: 'iife',
@@ -23,7 +23,7 @@ await esbuild.build({
 
 // Bundle Electron main process
 await esbuild.build({
-  entryPoints: ['built/electron.ts'],
+  entryPoints: ['src/electron.ts'],
   bundle: true,
   outfile: 'dist/electron.cjs',
   format: 'cjs',
@@ -36,7 +36,7 @@ await esbuild.build({
 
 // Bundle preload script
 await esbuild.build({
-  entryPoints: ['built/preload.ts'],
+  entryPoints: ['src/preload.ts'],
   bundle: true,
   outfile: 'dist/preload.cjs',
   format: 'cjs',
@@ -49,7 +49,7 @@ await esbuild.build({
 
 // Bundle CLI compile tool
 await esbuild.build({
-  entryPoints: ['built/compile-cli.ts'],
+  entryPoints: ['src/compile-cli.ts'],
   bundle: true,
   outfile: 'dist/compile-cli.mjs',
   format: 'esm',
@@ -61,7 +61,7 @@ await esbuild.build({
 });
 
 // Copy HTML
-fs.copyFileSync('built/index.html', 'dist/index.html');
+fs.copyFileSync('src/index.html', 'dist/index.html');
 
 // Copy xterm.js CSS
 fs.copyFileSync('node_modules/@xterm/xterm/css/xterm.css', 'dist/xterm.css');

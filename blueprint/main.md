@@ -6,7 +6,7 @@
 # Blueprint Compiler
 
 <!-- This document is the canonical definition of the application. The TypeScript
-     implementation lives under /built, compiles to /dist, and runs as an
+     implementation lives under /src, compiles to /dist, and runs as an
      Electron desktop application that opens on a local folder. Keep this file
      in /blueprint up to date whenever the implementation changes. -->
 
@@ -22,7 +22,7 @@ The long-term goal is **self-hosting**: this tool is itself defined by a markdow
 
 ```
 /blueprint/main.md    ← this document (canonical definition)
-/built/               ← TypeScript source
+/src/                 ← TypeScript source
   electron.ts         ← Electron main process (window, menu, IPC, API proxy)
   preload.ts          ← preload script (contextBridge for IPC)
   main.ts             ← renderer entry point, boots all modules
@@ -39,7 +39,7 @@ The long-term goal is **self-hosting**: this tool is itself defined by a markdow
   types.d.ts          ← global type declarations (ElectronAPI)
   index.html          ← HTML shell with all CSS
 /dist/                ← compiled output (esbuild bundle)
-  index.html          ← copied from /built
+  index.html          ← copied from /src
   app.js              ← bundled renderer JS (IIFE)
   electron.cjs        ← bundled Electron main process (CJS)
   preload.cjs         ← bundled preload script (CJS)
@@ -291,12 +291,12 @@ At convergence, the tool is fully self-hosting: it is both the product and the f
 
 ## Bootstrap Implementation
 
-The initial bootstrap version is the TypeScript implementation under `/built`, compiled to `/dist` via `node build.mjs`.
+The initial bootstrap version is the TypeScript implementation under `/src`, compiled to `/dist` via `node build.mjs`.
 
 ### Bootstrap Requirements
 
-- TypeScript source in `/built`, compiled with esbuild to a renderer IIFE bundle (`dist/app.js`), an Electron main process CJS bundle (`dist/electron.cjs`), a preload CJS bundle (`dist/preload.cjs`), and a CLI compile tool ESM bundle (`dist/compile-cli.mjs`).
-- An `index.html` shell in `/built` with all CSS embedded, copied to `/dist` at build time.
+- TypeScript source in `/src`, compiled with esbuild to a renderer IIFE bundle (`dist/app.js`), an Electron main process CJS bundle (`dist/electron.cjs`), a preload CJS bundle (`dist/preload.cjs`), and a CLI compile tool ESM bundle (`dist/compile-cli.mjs`).
+- An `index.html` shell in `/src` with all CSS embedded, copied to `/dist` at build time.
 - `main.md` copied from `/blueprint` to `/dist` for reference.
 - Launched via `npm start` (runs `electron .`) which starts the Electron app.
 - The Electron main process and CLI both use the shared `copilot-agent.ts` module for compilation, which wraps the Copilot SDK (`@github/copilot-sdk`) and manages the Copilot CLI (`@github/copilot`) process automatically. The agent writes files directly to the workspace folder. Authentication IPC still uses Node.js `https` directly.

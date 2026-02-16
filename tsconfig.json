@@ -8,11 +8,11 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "outDir": "./dist",
-    "rootDir": "./built",
+    "rootDir": "./src",
     "declaration": false,
     "sourceMap": true,
     "lib": ["ES2020", "DOM", "DOM.Iterable"]
   },
-  "include": ["built/**/*.ts"],
+  "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

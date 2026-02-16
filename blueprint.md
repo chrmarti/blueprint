@@ -9,7 +9,7 @@
 
 ```
 blueprint/    ← design documents and static assets
-built/        ← TypeScript source files and HTML
+src/          ← TypeScript source files and HTML
 dist/         ← build output (bundled JS, copied assets) — not checked in
 ```
 

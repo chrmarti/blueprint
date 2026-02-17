@@ -201,7 +201,7 @@ The output panel orchestrates transformation of the authored markdown into runna
 
 - A **Compile** button that sends the current markdown content to the Copilot SDK agent.
 - The SDK prompt is constructed by combining:
-  - A system message defining the compiler's role: *"You are a code generator. Your working directory is the project workspace root. A blueprint.md file in the workspace root describes the project's folder structure, tools, and processes. Follow its conventions when generating code."*
+  - The system prompt defined in [harness.md](harness.md).
   - The full markdown document as the user message.
 - The agent writes files directly to the workspace folder via its tools; the output panel uses an xterm.js terminal to display agent output with full ANSI escape code rendering (colors, formatting from the Copilot CLI). All agent events (tool calls, usage, turns, errors) are interleaved with streamed text in the terminal.
 - Structured agent events (tool starts with all arguments shown as key=value, completions, file changes) update both the terminal log and the status bar in real time.

@@ -82,44 +82,11 @@ The Electron main process (`electron.ts`) handles:
 
 ### IPC-Based API Proxy
 
-Authentication API calls (GitHub OAuth device flow) are made from the main process via Node.js `https` module. Compilation is handled by the Copilot SDK. The renderer communicates with the main process through IPC:
+See [auth.md](auth.md) for the authentication API proxy endpoints. The renderer communicates with the main process through IPC for all network requests.
 
-- `api:authDeviceCode(body)` → `POST https://github.com/login/device/code` — returns `{ status, body }`
-- `api:authToken(body)` → `POST https://github.com/login/oauth/access_token` — returns `{ status, body }`
-- `api:githubUser(token)` → `GET https://api.github.com/user` — returns `{ status, body }`
-- `api:copilotToken(ghToken)` → `GET https://api.github.com/copilot_internal/v2/token` — returns `{ status, body }`
-- `api:copilotModels(copilotToken)` → `GET https://api.githubcopilot.com/models` — returns `{ status, body }`
+### Copilot Agent Harness
 
-### Copilot Agent (Shared Module)
-
-The `copilot-agent.ts` module is the shared compilation backend, used by both the Electron main process and the standalone CLI. It wraps the Copilot SDK:
-
-- `initAgent({ githubToken, appRoot })` — Dynamically imports `@github/copilot-sdk` (ESM-only, loaded via `await import()`), creates a `CopilotClient` pointing to the CLI binary, and starts it. Safe to call multiple times (restarts the client).
-- `compileWithAgent({ model, markdown, workspaceFolder, systemPrompt?, onEvent })` — Creates a streaming session with `environment: { cwd: workspaceFolder }` so the agent's file tools operate in the project folder. Attaches a wildcard event listener that emits typed `CompileEvent`s (`log`, `chunk`, `tool_start`, `tool_complete`, `usage`, `error`, `done`, `files_changed`). Calls `sendAndWait()` with a 600-second timeout. Returns `{ ok, error? }`.
-- `stopAgent()` — Destroys the active session and stops the client.
-
-The module uses `import type` for compile-time SDK types and `await import('@github/copilot-sdk')` at runtime, since the SDK is ESM-only and the Electron main process is bundled as CJS.
-
-### Copilot SDK IPC (Electron)
-
-The Electron main process delegates to the shared agent module via IPC:
-
-- `copilot:init(githubToken)` — Calls `initAgent()` with the GitHub token and `app.getAppPath()`. Returns `{ ok, error? }`.
-- `copilot:compile({ model, systemPrompt, userPrompt })` — Calls `compileWithAgent()` and relays events to the renderer: `copilot:chunk` for text deltas (backward-compatible streaming) and `copilot:event` for structured agent events (tool calls, usage, errors, files_changed). Returns `{ ok, error? }` on completion.
-- `copilot:stop` — Calls `stopAgent()` to clean up the session and client.
-
-### Logging
-
-All Copilot SDK activity is logged to the launch terminal (stdout/stderr) with a `[copilot]` prefix. A wildcard event listener on each session logs:
-
-- Client lifecycle: init, start, stop
-- Session events: `session.start`, `session.info`, `session.error`, `session.idle`, `session.model_change`, `session.shutdown`
-- Turn progress: `assistant.turn_start`, `assistant.turn_end`, `assistant.intent`
-- Tool calls: `tool.execution_start`, `tool.execution_complete`
-- Token usage: `assistant.usage` (model, input/output tokens, duration)
-- Final response size in characters
-
-`assistant.message_delta` events are excluded from logging (too noisy).
+See [harness.md](harness.md) for the shared Copilot agent module, SDK IPC, logging, and system prompt details.
 
 ### IPC Handlers
 
@@ -222,25 +189,7 @@ The output panel orchestrates transformation of the authored markdown into runna
 
 ## Authentication
 
-The application uses the GitHub OAuth device flow to authenticate users and access their Copilot subscription.
-
-### Device Flow
-
-1. User clicks "Sign in with GitHub" in the toolbar or settings.
-2. The app requests a device code from GitHub via IPC (`api:authDeviceCode`).
-3. A one-time code is displayed; the user copies it and opens GitHub's verification page.
-4. The app polls for authorization (`api:authToken`) until the user completes sign-in.
-5. On success, the GitHub access token is stored in `localStorage`.
-
-### Copilot Token
-
-- After GitHub sign-in, the app fetches a Copilot API token via IPC (`api:copilotToken`).
-- The Copilot token is cached in `localStorage` and refreshed when it nears expiration.
-- All compilation requests use this token to authenticate with the Copilot chat completions endpoint via IPC.
-
-### How It Works
-
-The renderer never makes network requests directly. Authentication API calls go through `window.electronAPI` IPC methods to the main process, which uses Node.js `https`. Compilation goes through the Copilot SDK agent: the renderer calls `window.electronAPI.copilotCompile()`, which triggers the main process to call `compileWithAgent()` from the shared module. The agent creates a session, writes files to the workspace folder via its tools, and streams events back. Text deltas are relayed via `copilot:chunk` and structured events via `copilot:event`. When the agent signals `files_changed`, the file tree refreshes automatically.
+See [auth.md](auth.md) for details.
 
 ## Browser Tab
 

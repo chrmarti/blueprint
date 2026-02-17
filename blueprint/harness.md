@@ -50,6 +50,37 @@ You are a code generator working in a project workspace. The workspace root cont
 You have a custom tool available: open_in_preview_browser. Call it with a URL (e.g., http://localhost:3000) to open that URL in the application's embedded browser. Use this after starting a dev server so the user can see the running application.
 ```
 
+## Copilot Agent (Shared Module)
+
+The `copilot-agent.ts` module is the shared compilation backend, used by both the Electron main process and the standalone CLI. It wraps the Copilot SDK:
+
+- `initAgent({ githubToken, appRoot })` — Dynamically imports `@github/copilot-sdk` (ESM-only, loaded via `await import()`), creates a `CopilotClient` pointing to the CLI binary, and starts it. Safe to call multiple times (restarts the client).
+- `compileWithAgent({ model, markdown, workspaceFolder, systemPrompt?, onEvent })` — Creates a streaming session with `environment: { cwd: workspaceFolder }` so the agent's file tools operate in the project folder. Attaches a wildcard event listener that emits typed `CompileEvent`s (`log`, `chunk`, `tool_start`, `tool_complete`, `usage`, `error`, `done`, `files_changed`). Calls `sendAndWait()` with a 600-second timeout. Returns `{ ok, error? }`.
+- `stopAgent()` — Destroys the active session and stops the client.
+
+The module uses `import type` for compile-time SDK types and `await import('@github/copilot-sdk')` at runtime, since the SDK is ESM-only and the Electron main process is bundled as CJS.
+
+## Copilot SDK IPC (Electron)
+
+The Electron main process delegates to the shared agent module via IPC:
+
+- `copilot:init(githubToken)` — Calls `initAgent()` with the GitHub token and `app.getAppPath()`. Returns `{ ok, error? }`.
+- `copilot:compile({ model, systemPrompt, userPrompt })` — Calls `compileWithAgent()` and relays events to the renderer: `copilot:chunk` for text deltas (backward-compatible streaming) and `copilot:event` for structured agent events (tool calls, usage, errors, files_changed). Returns `{ ok, error? }` on completion.
+- `copilot:stop` — Calls `stopAgent()` to clean up the session and client.
+
+## Logging
+
+All Copilot SDK activity is logged to the launch terminal (stdout/stderr) with a `[copilot]` prefix. A wildcard event listener on each session logs:
+
+- Client lifecycle: init, start, stop
+- Session events: `session.start`, `session.info`, `session.error`, `session.idle`, `session.model_change`, `session.shutdown`
+- Turn progress: `assistant.turn_start`, `assistant.turn_end`, `assistant.intent`
+- Tool calls: `tool.execution_start`, `tool.execution_complete`
+- Token usage: `assistant.usage` (model, input/output tokens, duration)
+- Final response size in characters
+
+`assistant.message_delta` events are excluded from logging (too noisy).
+
 ## Event Flow
 
 When the agent calls `open_in_preview_browser`:

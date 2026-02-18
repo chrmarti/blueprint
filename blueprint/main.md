@@ -222,6 +222,43 @@ Accessible via gear icon in the toolbar:
 - Export full project state (markdown + compiled output + settings) as a JSON bundle.
 - Import project state from a JSON bundle.
 
+## Testing
+
+Automated end-to-end tests use Playwright's Electron support to launch the app and verify all basic functionality. Tests live in `/test` and are run with Node.js directly (no test framework needed). A GitHub token is required for tests that exercise compilation. Locally the GitHub CLI can be used to get a token, in CI the GITHUB_TOKEN env variable must be set.
+
+```
+GITHUB_TOKEN=$(gh auth token) node test/interact.mjs
+```
+
+### Test Setup
+
+- Launch the Electron app via `playwright`'s `_electron.launch()`, pointing at the project root (`.`) so that `app.getAppPath()` resolves correctly for the Copilot CLI.
+- Pass a workspace folder as a command-line argument to open it on launch.
+- Save screenshots at each stage for visual verification.
+- Save screenshots periodically during long stages for visual verification.
+
+### Basic Functionality Tests
+
+The test script verifies the following end-to-end scenarios:
+
+1. **App Launch** — The Electron window opens with the correct title ("Blueprint Compiler").
+2. **Folder Open** — Passing a folder path on the command line loads it into the sidebar. The folder name appears in the toolbar and `blueprint.md` is visible in the file tree.
+3. **File Tree** — Directory entries render with expand/collapse arrows; files show type-appropriate icons. Clicking a file loads its content into the editor.
+4. **Compile** — Clicking the Compile button triggers the Copilot agent. The status bar shows "Compiling..." and agent events stream into the xterm.js output terminal.
+5. **Compile Completion** — The status element's class changes to `success` (or `error` on failure) and the status text updates. The file tree refreshes to show newly generated files.
+6. **Auth Gate** — When no GitHub token is present, clicking Compile shows "Not signed in" in the status bar without crashing.
+
+### Test Implementation
+
+Tests use Playwright's Electron API:
+
+- `electron.launch()` starts the app with the specified executable and arguments.
+- `app.firstWindow()` returns the main `BrowserWindow` page object.
+- Standard Playwright locators (`locator`, `getByText`) find UI elements.
+- `window.evaluate()` executes code in the renderer context for auth injection and IPC calls.
+- `waitFor()` with timeouts handles async operations (folder loading, compilation).
+- Polling loops on the `#compile-status` element detect compilation completion (check `class` for `success`/`error`).
+
 ## Self-Hosting Workflow
 
 The defining goal of this project is self-hosting. The path to get there is incremental:

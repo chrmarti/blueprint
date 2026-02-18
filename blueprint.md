@@ -10,6 +10,7 @@
 ```
 blueprint/    ← design documents and static assets
 src/          ← TypeScript source files and HTML
+test/          ← Test scripts and fixtures
 dist/         ← build output (bundled JS, copied assets) — not checked in
 ```
 
@@ -20,6 +21,7 @@ dist/         ← build output (bundled JS, copied assets) — not checked in
 - **esbuild** — bundler (IIFE for renderer, CJS for main/preload, ESM for CLI tools)
 - **marked** — Markdown rendering
 - **@xterm/xterm** — terminal emulator for compilation output (renders ANSI escape codes)
+- **playwright** — UI testing
 
 ## Build
 
@@ -27,4 +29,5 @@ dist/         ← build output (bundled JS, copied assets) — not checked in
 npm run build     # runs build.mjs → bundles to dist/
 npm start         # launches Electron
 npm run dev       # build + start
+npm test          # run tests
 ```

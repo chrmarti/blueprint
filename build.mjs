@@ -47,11 +47,11 @@ await esbuild.build({
   external: ['electron'],
 });
 
-// Bundle CLI compile tool
+// Bundle CLI implement tool
 await esbuild.build({
-  entryPoints: ['src/compile-cli.ts'],
+  entryPoints: ['src/implement-cli.ts'],
   bundle: true,
-  outfile: 'dist/compile-cli.mjs',
+  outfile: 'dist/implement-cli.mjs',
   format: 'esm',
   platform: 'node',
   target: 'node18',

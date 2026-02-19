@@ -25,8 +25,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   copilotModels: (copilotToken: string) => ipcRenderer.invoke('api:copilotModels', copilotToken),
   // Copilot SDK
   copilotInit: (githubToken: string) => ipcRenderer.invoke('copilot:init', githubToken),
-  copilotCompile: (opts: { model: string; systemPrompt: string; userPrompt: string }) =>
-    ipcRenderer.invoke('copilot:compile', opts),
+  copilotImplement: (opts: { model: string; systemPrompt: string; userPrompt: string }) =>
+    ipcRenderer.invoke('copilot:implement', opts),
   copilotStop: () => ipcRenderer.invoke('copilot:stop'),
   onCopilotChunk: (callback: (delta: string) => void) => {
     ipcRenderer.on('copilot:chunk', (_event, delta: string) => callback(delta));
@@ -50,8 +50,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMenuOpenFolder: (callback: () => void) => {
     ipcRenderer.on('menu:openFolder', () => callback());
   },
-  onAutoCompile: (callback: (filePath: string | null) => void) => {
-    ipcRenderer.on('command:compile', (_event, filePath: string | null) => callback(filePath));
+  onAutoImplement: (callback: (filePath: string | null) => void) => {
+    ipcRenderer.on('command:implement', (_event, filePath: string | null) => callback(filePath));
   },
   gitStatus: () => ipcRenderer.invoke('git:status'),
   platform: process.platform,

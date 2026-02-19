@@ -1,5 +1,5 @@
 {
-  "name": "blueprint-compiler",
+  "name": "blueprint-implementer",
   "version": "0.1.0",
   "license": "SEE LICENSE IN LICENSE.txt",
   "private": true,
@@ -9,7 +9,7 @@
     "build": "node build.mjs",
     "start": "electron .",
     "dev": "npm run build && npm run start",
-    "compile": "node dist/compile-cli.mjs"
+    "implement": "node dist/implement-cli.mjs"
   },
   "devDependencies": {
     "electron": "^33.0.0",

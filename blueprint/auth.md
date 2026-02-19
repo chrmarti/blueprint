@@ -19,7 +19,7 @@ The application uses the GitHub OAuth device flow to authenticate users and acce
 
 - After GitHub sign-in, the app fetches a Copilot API token via IPC (`api:copilotToken`).
 - The Copilot token is cached in `localStorage` and refreshed when it nears expiration.
-- All compilation requests use this token to authenticate with the Copilot chat completions endpoint via IPC.
+- All implementation requests use this token to authenticate with the Copilot chat completions endpoint via IPC.
 
 ## IPC API Proxy
 
@@ -33,4 +33,4 @@ Authentication API calls are made from the Electron main process via Node.js `ht
 
 ## How It Works
 
-The renderer never makes network requests directly. Authentication API calls go through `window.electronAPI` IPC methods to the main process, which uses Node.js `https`. Compilation goes through the Copilot SDK agent: the renderer calls `window.electronAPI.copilotCompile()`, which triggers the main process to call `compileWithAgent()` from the shared module. The agent creates a session, writes files to the workspace folder via its tools, and streams events back. Text deltas are relayed via `copilot:chunk` and structured events via `copilot:event`. When the agent signals `files_changed`, the file tree refreshes automatically.
+The renderer never makes network requests directly. Authentication API calls go through `window.electronAPI` IPC methods to the main process, which uses Node.js `https`. Implementation goes through the Copilot SDK agent: the renderer calls `window.electronAPI.copilotImplement()`, which triggers the main process to call `implementWithAgent()` from the shared module. The agent creates a session, writes files to the workspace folder via its tools, and streams events back. Text deltas are relayed via `copilot:chunk` and structured events via `copilot:event`. When the agent signals `files_changed`, the file tree refreshes automatically.

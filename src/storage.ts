@@ -3,13 +3,13 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-const STORAGE_PREFIX = 'blueprint-compiler:';
+const STORAGE_PREFIX = 'blueprint-implementer:';
 
 export interface ProjectState {
   markdown: string;
-  compiledOutput: string;
+  implementedOutput: string;
   settings: AppSettings;
-  history: CompilationEntry[];
+  history: ImplementationEntry[];
 }
 
 export interface AppSettings {
@@ -20,7 +20,7 @@ export interface AppSettings {
   theme: 'dark' | 'light';
 }
 
-export interface CompilationEntry {
+export interface ImplementationEntry {
   timestamp: number;
   markdown: string;
   output: string;
@@ -56,11 +56,11 @@ export function saveMarkdown(md: string): void {
 }
 
 export function loadOutput(): string {
-  return get<string>('compiledOutput', '');
+  return get<string>('implementedOutput', '');
 }
 
 export function saveOutput(output: string): void {
-  set('compiledOutput', output);
+  set('implementedOutput', output);
 }
 
 export function loadSettings(): AppSettings {
@@ -71,11 +71,11 @@ export function saveSettings(s: AppSettings): void {
   set('settings', s);
 }
 
-export function loadHistory(): CompilationEntry[] {
-  return get<CompilationEntry[]>('history', []);
+export function loadHistory(): ImplementationEntry[] {
+  return get<ImplementationEntry[]>('history', []);
 }
 
-export function pushHistory(entry: CompilationEntry): void {
+export function pushHistory(entry: ImplementationEntry): void {
   const history = loadHistory();
   history.unshift(entry);
   if (history.length > 50) history.length = 50; // cap at 50
@@ -85,7 +85,7 @@ export function pushHistory(entry: CompilationEntry): void {
 export function exportProject(): ProjectState {
   return {
     markdown: loadMarkdown(),
-    compiledOutput: loadOutput(),
+    implementedOutput: loadOutput(),
     settings: loadSettings(),
     history: loadHistory(),
   };
@@ -93,7 +93,7 @@ export function exportProject(): ProjectState {
 
 export function importProject(state: ProjectState): void {
   saveMarkdown(state.markdown);
-  saveOutput(state.compiledOutput);
+  saveOutput(state.implementedOutput);
   saveSettings(state.settings);
   set('history', state.history);
 }

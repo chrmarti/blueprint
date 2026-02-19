@@ -20,7 +20,7 @@ dist/         ← build output (bundled JS, copied assets) — not checked in
 - **TypeScript** — source language (target ES2020, bundler module resolution)
 - **esbuild** — bundler (IIFE for renderer, CJS for main/preload, ESM for CLI tools)
 - **marked** — Markdown rendering
-- **@xterm/xterm** — terminal emulator for compilation output (renders ANSI escape codes)
+- **@xterm/xterm** — terminal emulator for implementation output (renders ANSI escape codes)
 - **playwright** — UI testing
 
 ## Build

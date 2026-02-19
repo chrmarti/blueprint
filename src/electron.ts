@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import https from 'node:https';
-import { initAgent, compileWithAgent, stopAgent } from './copilot-agent';
+import { initAgent, implementWithAgent, stopAgent } from './copilot-agent';
 
 let mainWindow: BrowserWindow | null = null;
 let workspaceFolder: string | null = null;
@@ -53,9 +53,9 @@ function httpsRequest(
 }
 
 const COPILOT_HEADERS = {
-  'Editor-Version': 'Blueprint-Compiler/0.1.0',
-  'Editor-Plugin-Version': 'blueprint-compiler/0.1.0',
-  'User-Agent': 'Blueprint-Compiler/0.1.0',
+  'Editor-Version': 'Blueprint-Implementer/0.1.0',
+  'Editor-Plugin-Version': 'blueprint-implementer/0.1.0',
+  'User-Agent': 'Blueprint-Implementer/0.1.0',
   'Openai-Organization': 'github-copilot',
   'Copilot-Integration-Id': 'vscode-chat',
 };
@@ -72,7 +72,7 @@ function setupIPC(): void {
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     workspaceFolder = result.filePaths[0];
-    mainWindow?.setTitle(`Blueprint Compiler — ${path.basename(workspaceFolder)}`);
+    mainWindow?.setTitle(`Blueprint Implementer — ${path.basename(workspaceFolder)}`);
     // Reinitialize agent with new workspace folder so its cwd is correct
     if (lastGithubToken) {
       initAgent({
@@ -154,7 +154,7 @@ function setupIPC(): void {
     return httpsRequest('GET', 'https://api.github.com/user', {
       'Authorization': `token ${token}`,
       'Accept': 'application/json',
-      'User-Agent': 'Blueprint-Compiler/0.1.0',
+      'User-Agent': 'Blueprint-Implementer/0.1.0',
     }, null);
   });
 
@@ -162,7 +162,7 @@ function setupIPC(): void {
     return httpsRequest('GET', 'https://api.github.com/copilot_internal/v2/token', {
       'Authorization': `token ${ghToken}`,
       'Accept': 'application/json',
-      'User-Agent': 'Blueprint-Compiler/0.1.0',
+      'User-Agent': 'Blueprint-Implementer/0.1.0',
     }, null);
   });
 
@@ -185,13 +185,13 @@ function setupIPC(): void {
     });
   });
 
-  ipcMain.handle('copilot:compile', async (_event, opts: {
+  ipcMain.handle('copilot:implement', async (_event, opts: {
     model: string;
     systemPrompt: string;
     userPrompt: string;
   }) => {
     const folder = workspaceFolder || process.cwd();
-    console.log(`[copilot] Compile request — model: ${opts.model}, workspace: ${folder}`);
+    console.log(`[copilot] Implement request — model: ${opts.model}, workspace: ${folder}`);
 
     // Include blueprint.md content in the system prompt so the agent has
     // project context without needing a tool call first (matches CLI behavior).
@@ -204,7 +204,7 @@ function setupIPC(): void {
       } catch {}
     }
 
-    return compileWithAgent({
+    return implementWithAgent({
       model: opts.model,
       markdown: opts.userPrompt,
       workspaceFolder: folder,
@@ -320,8 +320,8 @@ function createWindow(): void {
     width: 1400,
     height: 900,
     title: workspaceFolder
-      ? `Blueprint Compiler — ${path.basename(workspaceFolder)}`
-      : 'Blueprint Compiler',
+      ? `Blueprint Implementer — ${path.basename(workspaceFolder)}`
+      : 'Blueprint Implementer',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -344,14 +344,14 @@ function createWindow(): void {
 async function main(): Promise<void> {
   await app.whenReady();
 
-  // Check for folder argument and compile command on command line
+  // Check for folder argument and implement command on command line
   const args = process.argv.slice(app.isPackaged ? 1 : 2);
-  let autoCompileFile: string | null = null;
-  let compileMode = false;
+  let autoImplementFile: string | null = null;
+  let implementMode = false;
 
   for (const arg of args) {
-    if (arg === 'compile') {
-      compileMode = true;
+    if (arg === 'implement') {
+      implementMode = true;
       continue;
     }
     if (arg.startsWith('-')) continue;
@@ -360,7 +360,7 @@ async function main(): Promise<void> {
     if (fs.statSync(resolved).isDirectory()) {
       workspaceFolder = resolved;
     } else if (fs.statSync(resolved).isFile()) {
-      autoCompileFile = resolved;
+      autoImplementFile = resolved;
       // Infer workspace folder from file's directory if not set
       if (!workspaceFolder) workspaceFolder = path.dirname(resolved);
     }
@@ -374,20 +374,20 @@ async function main(): Promise<void> {
     }
   }
 
-  if (compileMode) {
-    console.log(`[main] Compile mode enabled${autoCompileFile ? ` — file: ${autoCompileFile}` : ''}`);
+  if (implementMode) {
+    console.log(`[main] Implement mode enabled${autoImplementFile ? ` — file: ${autoImplementFile}` : ''}`);
   }
 
   setupIPC();
   buildMenu();
   createWindow();
 
-  // Send auto-compile command after the renderer is ready
-  if (compileMode) {
+  // Send auto-implement command after the renderer is ready
+  if (implementMode) {
     mainWindow?.webContents.on('did-finish-load', () => {
       // Give the renderer time to init auth and restore session
       setTimeout(() => {
-        mainWindow?.webContents.send('command:compile', autoCompileFile);
+        mainWindow?.webContents.send('command:implement', autoImplementFile);
       }, 2000);
     });
   }

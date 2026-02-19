@@ -22,8 +22,8 @@ interface CopilotTokenData {
   expires_at: number;
 }
 
-const GH_TOKEN_KEY = 'blueprint-compiler:github-token';
-const COPILOT_TOKEN_KEY = 'blueprint-compiler:copilot-token';
+const GH_TOKEN_KEY = 'blueprint-implementer:github-token';
+const COPILOT_TOKEN_KEY = 'blueprint-implementer:copilot-token';
 const CLIENT_ID = 'Iv1.b507a08c87ecfe98';
 
 let currentUser: GitHubUser | null = null;

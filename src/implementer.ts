@@ -25,7 +25,7 @@ let term: Terminal;
 let outputContainerEl: HTMLElement;
 let statusEl: HTMLElement;
 let plainTextBuffer = '';
-let onCompiled: (html: string) => void = () => {};
+let onImplemented: (html: string) => void = () => {};
 
 function getTermTheme(): { background: string; foreground: string; cursor: string } {
   const style = getComputedStyle(document.documentElement);
@@ -36,10 +36,10 @@ function getTermTheme(): { background: string; foreground: string; cursor: strin
   };
 }
 
-export function initCompiler(opts: { onCompiled: (html: string) => void }): void {
-  outputContainerEl = document.getElementById('compile-output') as HTMLElement;
-  statusEl = document.getElementById('compile-status') as HTMLElement;
-  onCompiled = opts.onCompiled;
+export function initImplementer(opts: { onImplemented: (html: string) => void }): void {
+  outputContainerEl = document.getElementById('implement-output') as HTMLElement;
+  statusEl = document.getElementById('implement-status') as HTMLElement;
+  onImplemented = opts.onImplemented;
 
   const colors = getTermTheme();
   term = new Terminal({
@@ -103,7 +103,7 @@ function appendLog(line: string, inline?: boolean): void {
   }
 }
 
-export async function compile(markdown: string): Promise<void> {
+export async function implement(markdown: string): Promise<void> {
   if (!isSignedIn()) {
     setStatus('error', 'Not signed in. Click the Sign in button in the toolbar or open Settings.');
     return;
@@ -122,12 +122,12 @@ export async function compile(markdown: string): Promise<void> {
   }
 
   if (!markdown.trim()) {
-    setStatus('error', 'Nothing to compile. Open a markdown file, type instructions, or open a folder with a blueprint.md.');
+    setStatus('error', 'Nothing to implement. Open a markdown file, type instructions, or open a folder with a blueprint.md.');
     return;
   }
 
   const settings = loadSettings();
-  setStatus('info', 'Compiling...');
+  setStatus('info', 'Implementing...');
   term.clear();
   plainTextBuffer = '';
 
@@ -195,7 +195,7 @@ export async function compile(markdown: string): Promise<void> {
       }
     });
 
-    const result = await window.electronAPI.copilotCompile({
+    const result = await window.electronAPI.copilotImplement({
       model: settings.model,
       systemPrompt: SYSTEM_PROMPT,
       userPrompt: markdown,
@@ -204,7 +204,7 @@ export async function compile(markdown: string): Promise<void> {
     window.electronAPI.removeCopilotEventListeners();
 
     if (!result.ok) {
-      setStatus('error', `Compilation failed: ${result.error || 'Unknown error'}`);
+      setStatus('error', `Implementation failed: ${result.error || 'Unknown error'}`);
       return;
     }
 
@@ -220,10 +220,10 @@ export async function compile(markdown: string): Promise<void> {
 
     // Refresh file tree one more time to pick up any late writes
     refreshTree();
-    setStatus('success', 'Compilation complete — files written to workspace');
-    onCompiled(output);
+    setStatus('success', 'Implementation complete — files written to workspace');
+    onImplemented(output);
   } catch (err) {
-    setStatus('error', `Compilation failed: ${(err as Error).message}`);
+    setStatus('error', `Implementation failed: ${(err as Error).message}`);
   }
 }
 

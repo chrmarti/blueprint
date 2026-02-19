@@ -36,8 +36,8 @@ onPermissionRequest: async (request) => {
 
 ## `send()` vs `sendAndWait()`
 
-- `sendAndWait(prompt, timeout)` — Simple but uses a single fixed timeout. Long-running compilations with active tool calls can exceed it.
-- `send(prompt)` + manual idle tracking — Better for our use case. Subscribe to events, reset an activity timer on every event, and resolve on `session.idle` or `session.error`. This way, compilations that produce events stay alive indefinitely, while truly stuck sessions still time out.
+- `sendAndWait(prompt, timeout)` — Simple but uses a single fixed timeout. Long-running implementations with active tool calls can exceed it.
+- `send(prompt)` + manual idle tracking — Better for our use case. Subscribe to events, reset an activity timer on every event, and resolve on `session.idle` or `session.error`. This way, implementations that produce events stay alive indefinitely, while truly stuck sessions still time out.
 
 ```ts
 const unsubscribe = session.on((event) => {

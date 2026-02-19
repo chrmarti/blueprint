@@ -27,7 +27,7 @@ Opens a URL in the application's Preview panel — the embedded browser on the r
 
 **Use case:** After the agent starts a dev server via the shell tool, it calls `open_in_preview_browser` to show the running application to the user without requiring manual navigation.
 
-**Implementation:** Defined in `copilot-agent.ts` via the SDK's `defineTool()` helper with a raw JSON schema for parameters. The tool's handler emits a `preview_url` event through the `onEvent` callback, which the Electron main process relays to the renderer via IPC (`copilot:event`). The renderer's `compiler.ts` handles the event by calling `loadPreviewUrl()` from `preview.ts` and un-collapsing the preview panel.
+**Implementation:** Defined in `copilot-agent.ts` via the SDK's `defineTool()` helper with a raw JSON schema for parameters. The tool's handler emits a `preview_url` event through the `onEvent` callback, which the Electron main process relays to the renderer via IPC (`copilot:event`). The renderer's `implementer.ts` handles the event by calling `loadPreviewUrl()` from `preview.ts` and un-collapsing the preview panel.
 
 ## System Prompt
 
@@ -35,7 +35,7 @@ The system prompt is appended to the SDK's built-in prompt (using `mode: 'append
 
 1. The base role definition: code generator operating in the project workspace root, following `blueprint.md` conventions.
 2. A description of the `open_in_preview_browser` tool and when to use it.
-3. The contents of `blueprint.md` from the workspace root (injected by `electron.ts` at compile time, if the file exists).
+3. The contents of `blueprint.md` from the workspace root (injected by `electron.ts` at implement time, if the file exists).
 
 ```
 You are a code generator working in a project workspace. The workspace root contains a blueprint.md file that describes the application to build — its architecture, components, file structure, and behavior. The blueprint may be self-contained or it may reference other markdown documents in the workspace that together make up the full specification. Your job is to read the blueprint and turn it into working code:
@@ -52,10 +52,10 @@ You have a custom tool available: open_in_preview_browser. Call it with a URL (e
 
 ## Copilot Agent (Shared Module)
 
-The `copilot-agent.ts` module is the shared compilation backend, used by both the Electron main process and the standalone CLI. It wraps the Copilot SDK:
+The `copilot-agent.ts` module is the shared implementation backend, used by both the Electron main process and the standalone CLI. It wraps the Copilot SDK:
 
 - `initAgent({ githubToken, appRoot })` — Dynamically imports `@github/copilot-sdk` (ESM-only, loaded via `await import()`), creates a `CopilotClient` pointing to the CLI binary, and starts it. Safe to call multiple times (restarts the client).
-- `compileWithAgent({ model, markdown, workspaceFolder, systemPrompt?, onEvent })` — Creates a streaming session with `environment: { cwd: workspaceFolder }` so the agent's file tools operate in the project folder. Attaches a wildcard event listener that emits typed `CompileEvent`s (`log`, `chunk`, `tool_start`, `tool_complete`, `usage`, `error`, `done`, `files_changed`). Calls `sendAndWait()` with a 600-second timeout. Returns `{ ok, error? }`.
+- `implementWithAgent({ model, markdown, workspaceFolder, systemPrompt?, onEvent })` — Creates a streaming session with `environment: { cwd: workspaceFolder }` so the agent's file tools operate in the project folder. Attaches a wildcard event listener that emits typed `ImplementEvent`s (`log`, `chunk`, `tool_start`, `tool_complete`, `usage`, `error`, `done`, `files_changed`). Calls `sendAndWait()` with a 600-second timeout. Returns `{ ok, error? }`.
 - `stopAgent()` — Destroys the active session and stops the client.
 
 The module uses `import type` for compile-time SDK types and `await import('@github/copilot-sdk')` at runtime, since the SDK is ESM-only and the Electron main process is bundled as CJS.
@@ -65,7 +65,7 @@ The module uses `import type` for compile-time SDK types and `await import('@git
 The Electron main process delegates to the shared agent module via IPC:
 
 - `copilot:init(githubToken)` — Calls `initAgent()` with the GitHub token and `app.getAppPath()`. Returns `{ ok, error? }`.
-- `copilot:compile({ model, systemPrompt, userPrompt })` — Calls `compileWithAgent()` and relays events to the renderer: `copilot:chunk` for text deltas (backward-compatible streaming) and `copilot:event` for structured agent events (tool calls, usage, errors, files_changed). Returns `{ ok, error? }` on completion.
+- `copilot:implement({ model, systemPrompt, userPrompt })` — Calls `implementWithAgent()` and relays events to the renderer: `copilot:chunk` for text deltas (backward-compatible streaming) and `copilot:event` for structured agent events (tool calls, usage, errors, files_changed). Returns `{ ok, error? }` on completion.
 - `copilot:stop` — Calls `stopAgent()` to clean up the session and client.
 
 ## Logging
@@ -87,6 +87,6 @@ When the agent calls `open_in_preview_browser`:
 
 1. The tool handler in `copilot-agent.ts` emits a `preview_url` event with `{ url }` data.
 2. `electron.ts` relays the event to the renderer via `mainWindow.webContents.send('copilot:event', event)`.
-3. `compiler.ts` receives the event, calls `loadPreviewUrl(url)` and reveals the preview panel.
+3. `implementer.ts` receives the event, calls `loadPreviewUrl(url)` and reveals the preview panel.
 4. `preview.ts` sets the iframe's `src` attribute to the URL (adding `allow-same-origin` to the sandbox for proper origin access).
 5. The tool handler returns a success string to the agent, which continues its turn.

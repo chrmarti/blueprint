@@ -4,8 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { loadSettings, saveSettings, loadHistory, exportProject, importProject } from './storage';
-import type { CompilationEntry } from './storage';
-import { setOutput } from './compiler';
+import type { ImplementationEntry } from './storage';
+import { setOutput } from './implementer';
 import { loadPreview } from './preview';
 import { startSignIn, signOut, isSignedIn, getUser, getCopilotToken, type GitHubUser } from './auth';
 
@@ -186,7 +186,7 @@ function applyModelMaxTokens(modelId: string, maxTokensInput: HTMLInputElement):
     maxTokensInput.max = String(limit);
   } else {
     // Fallback: no metadata available, leave current value
-    console.log(`[Blueprint Compiler] No max_output_tokens in metadata for ${modelId}`, meta?.capabilities);
+    console.log(`[Blueprint Implementer] No max_output_tokens in metadata for ${modelId}`, meta?.capabilities);
   }
 }
 
@@ -284,11 +284,11 @@ function renderHistory(): void {
   historyListEl.innerHTML = '';
 
   if (entries.length === 0) {
-    historyListEl.innerHTML = '<div style="padding: 12px; color: var(--text-muted);">No compilation history yet.</div>';
+    historyListEl.innerHTML = '<div style="padding: 12px; color: var(--text-muted);">No implementation history yet.</div>';
     return;
   }
 
-  entries.forEach((entry: CompilationEntry) => {
+  entries.forEach((entry: ImplementationEntry) => {
     const div = document.createElement('div');
     div.className = 'history-item';
     const date = new Date(entry.timestamp);

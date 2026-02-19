@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { initEditor, setContent, getContent, setFontSize } from './editor';
-import { initCompiler, compile, setOutput, getOutput, saveOutputToFile, updateTermTheme } from './compiler';
+import { initImplementer, implement, setOutput, getOutput, saveOutputToFile, updateTermTheme } from './implementer';
 import { initPreview } from './preview';
 import { initLayout } from './layout';
 import { initSettings, applyTheme, updateAuthUI } from './settings';
@@ -31,8 +31,8 @@ async function boot(): Promise<void> {
     },
   });
 
-  initCompiler({
-    onCompiled: (_html: string) => {},
+  initImplementer({
+    onImplemented: (_html: string) => {},
   });
 
   initPreview();
@@ -49,7 +49,7 @@ async function boot(): Promise<void> {
   applyTheme(settings.theme);
   setFontSize(settings.fontSize);
 
-  // Restore last compiled output from localStorage (session persistence)
+  // Restore last implemented output from localStorage (session persistence)
   const output = loadOutput();
   if (output) {
     setOutput(output);
@@ -58,9 +58,9 @@ async function boot(): Promise<void> {
   // If Electron provided a workspace folder on launch, the file browser
   // picks it up via the 'workspace:folderOpened' IPC event automatically.
 
-  // Listen for auto-compile command (triggered by `npm start -- compile [file]`)
+  // Listen for auto-implement command (triggered by `npm start -- implement [file]`)
   if (window.electronAPI) {
-    window.electronAPI.onAutoCompile(async (filePath) => {
+    window.electronAPI.onAutoImplement(async (filePath) => {
       if (filePath) {
         try {
           const content = await window.electronAPI!.readFile(filePath);
@@ -69,15 +69,15 @@ async function boot(): Promise<void> {
           const editorTitle = document.querySelector('#editor-panel .panel-header > span');
           if (editorTitle) editorTitle.textContent = parts[parts.length - 1];
         } catch (err) {
-          console.error('Failed to read file for auto-compile:', err);
+          console.error('Failed to read file for auto-implement:', err);
           return;
         }
       }
       const md = getContent();
       if (md.trim()) {
-        compile(md);
+        implement(md);
       } else {
-        console.warn('Auto-compile: no content to compile');
+        console.warn('Auto-implement: no content to implement');
       }
     });
   }
@@ -87,9 +87,9 @@ async function boot(): Promise<void> {
     promptOpenFolder();
   });
 
-  // Toolbar: compile
-  document.getElementById('compile-btn')?.addEventListener('click', () => {
-    compile(getContent());
+  // Toolbar: implement
+  document.getElementById('implement-btn')?.addEventListener('click', () => {
+    implement(getContent());
   });
 
   // Toolbar: save output to file
@@ -111,7 +111,7 @@ async function boot(): Promise<void> {
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key === 'b') {
       e.preventDefault();
-      compile(getContent());
+      implement(getContent());
     }
     if (mod && e.key === 's') {
       e.preventDefault();

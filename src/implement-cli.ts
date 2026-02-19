@@ -3,8 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// CLI tool for compiling a workspace using the Copilot SDK agent.
-// Usage: node dist/compile-cli.mjs <workspace-folder>
+// CLI tool for implementing a workspace using the Copilot SDK agent.
+// Usage: node dist/implement-cli.mjs <workspace-folder>
 //
 // The workspace folder should contain a blueprint.md in its root describing
 // the project's folder structure, tools, and processes. Additional .md files
@@ -14,7 +14,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { initAgent, compileWithAgent, stopAgent, checkHealth, SYSTEM_PROMPT } from './copilot-agent.js';
+import { initAgent, implementWithAgent, stopAgent, checkHealth, SYSTEM_PROMPT } from './copilot-agent.js';
 
 /** Recursively read all .md files under a directory and concatenate them. */
 function readMarkdownFiles(dir: string): { files: string[]; content: string } {
@@ -44,10 +44,10 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`Usage: node dist/compile-cli.mjs <workspace-folder>
+    console.log(`Usage: node dist/implement-cli.mjs <workspace-folder>
 
 Reads blueprint.md from the workspace root and any .md files from blueprint/ (if
-present), then compiles them into generated code using the Copilot agent.
+present), then implements them into generated code using the Copilot agent.
 
 Options:
   --model <model>    Model to use (default: claude-opus-4.6)
@@ -72,7 +72,7 @@ Environment:
 
   if (!workspaceArg) {
     console.error('Error: No workspace folder specified');
-    console.error('Usage: node dist/compile-cli.mjs <workspace-folder>');
+    console.error('Usage: node dist/implement-cli.mjs <workspace-folder>');
     process.exit(1);
   }
 
@@ -143,7 +143,7 @@ Environment:
     }
   }, 10_000);
 
-  const result = await compileWithAgent({
+  const result = await implementWithAgent({
     model,
     markdown,
     workspaceFolder,
@@ -195,7 +195,7 @@ Environment:
   await stopAgent();
 
   if (!result.ok) {
-    console.error(`[${ts()}] Compilation failed: ${result.error}`);
+    console.error(`[${ts()}] Implementation failed: ${result.error}`);
     process.exit(1);
   }
 

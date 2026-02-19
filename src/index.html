@@ -7,7 +7,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Blueprint Compiler</title>
+  <title>Blueprint Implementer</title>
   <link rel="stylesheet" href="xterm.css">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -67,8 +67,8 @@
       transition: background 0.15s;
     }
     #toolbar button:hover { background: var(--accent); color: #fff; }
-    #toolbar .compile-btn { background: var(--accent); color: #fff; font-weight: 600; }
-    #toolbar .compile-btn:hover { background: var(--accent-hover); }
+    #toolbar .implement-btn { background: var(--accent); color: #fff; font-weight: 600; }
+    #toolbar .implement-btn:hover { background: var(--accent-hover); }
 
     /* Panels container */
     #panels {
@@ -261,25 +261,25 @@
       white-space: nowrap;
     }
 
-    /* Compilation output (xterm container) */
-    #compile-output {
+    /* Implementation output (xterm container) */
+    #implement-output {
       width: 100%;
       height: 100%;
       background: var(--bg-surface);
     }
-    #compile-output .xterm {
+    #implement-output .xterm {
       padding: 8px;
     }
 
-    /* Compile status */
-    #compile-status {
+    /* Implement status */
+    #implement-status {
       padding: 6px 12px;
       border-top: 1px solid var(--border);
       font-size: 12px;
       color: var(--text-muted);
     }
-    #compile-status.error { color: var(--error); }
-    #compile-status.success { color: var(--success); }
+    #implement-status.error { color: var(--error); }
+    #implement-status.success { color: var(--success); }
 
     /* Preview */
     #preview-address-bar {
@@ -515,10 +515,10 @@
 <body>
   <!-- Toolbar -->
   <div id="toolbar">
-    <h1>Blueprint Compiler</h1>
+    <h1>Blueprint Implementer</h1>
     <button id="open-folder-btn" title="Open Folder (Cmd+Shift+O)">&#128193; Open Folder</button>
     <span id="folder-name"></span>
-    <button class="compile-btn" id="compile-btn" title="Cmd/Ctrl+B">&#9654; Compile</button>
+    <button class="implement-btn" id="implement-btn" title="Cmd/Ctrl+B">&#9654; Implement</button>
     <img id="toolbar-avatar" src="" alt="avatar">
     <span id="toolbar-user"></span>
     <button id="toolbar-sign-in">Sign in with GitHub</button>
@@ -571,19 +571,19 @@
       </div>
     </div>
 
-    <div class="drag-handle" data-left="editor-panel" data-right="compile-panel"></div>
+    <div class="drag-handle" data-left="editor-panel" data-right="implement-panel"></div>
 
     <!-- Output Panel -->
-    <div class="panel" id="compile-panel" style="flex: 1; position: relative;">
+    <div class="panel" id="implement-panel" style="flex: 1; position: relative;">
       <div class="panel-header">
         <span>Output</span>
         <button id="save-output-btn" title="Save output to file">&#128190;</button>
         <button id="history-btn" title="History">&#128337;</button>
       </div>
       <div class="panel-body">
-        <div id="compile-output"></div>
+        <div id="implement-output"></div>
       </div>
-      <div id="compile-status">Ready</div>
+      <div id="implement-status">Ready</div>
       <!-- History drawer -->
       <div id="history-drawer">
         <div class="drawer-header">
@@ -604,7 +604,7 @@
       <div class="auth-section">
         <h3>GitHub Account</h3>
         <div id="auth-signed-out">
-          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">Sign in with your GitHub account to use your Copilot subscription for compilation.</p>
+          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">Sign in with your GitHub account to use your Copilot subscription for implementation.</p>
           <button id="sign-in-btn" class="primary">Sign in with GitHub</button>
         </div>
         <div id="auth-device-flow">

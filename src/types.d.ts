@@ -34,7 +34,7 @@ interface ElectronAPI {
   copilotModels(copilotToken: string): Promise<ApiResponse>;
   // Copilot SDK
   copilotInit(githubToken: string): Promise<{ ok: boolean; error?: string }>;
-  copilotCompile(opts: { model: string; systemPrompt: string; userPrompt: string }): Promise<{ ok: boolean; content?: string; error?: string }>;
+  copilotImplement(opts: { model: string; systemPrompt: string; userPrompt: string }): Promise<{ ok: boolean; content?: string; error?: string }>;
   copilotStop(): Promise<void>;
   onCopilotChunk(callback: (delta: string) => void): void;
   removeCopilotChunkListeners(): void;
@@ -44,7 +44,7 @@ interface ElectronAPI {
   // Window events
   onFolderOpened(callback: (folder: string) => void): void;
   onMenuOpenFolder(callback: () => void): void;
-  onAutoCompile(callback: (filePath: string | null) => void): void;
+  onAutoImplement(callback: (filePath: string | null) => void): void;
   gitStatus(): Promise<{ status: string; file: string }[]>;
   platform: string;
 }

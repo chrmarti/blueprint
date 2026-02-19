@@ -24,13 +24,13 @@ const SYSTEM_PROMPT = `You are a code generator working in a project workspace. 
 
 You have a custom tool available: open_in_preview_browser. Call it with a URL (e.g., http://localhost:3000) to open that URL in the application's embedded browser. Use this after starting a dev server so the user can see the running application.`;
 
-export interface CompileEvent {
+export interface ImplementEvent {
   type: 'log' | 'chunk' | 'tool_start' | 'tool_complete' | 'usage' | 'error' | 'done' | 'files_changed' | 'turn_start' | 'turn_end' | 'preview_url';
   message?: string;
   data?: any;
 }
 
-export type CompileEventHandler = (event: CompileEvent) => void;
+export type ImplementEventHandler = (event: ImplementEvent) => void;
 
 let copilotClient: CopilotClientType | null = null;
 let activeSessionDestroy: (() => Promise<void>) | null = null;
@@ -49,7 +49,7 @@ function resolveCLIPath(appRoot: string): string {
 
 /**
  * Initialize the Copilot agent client.
- * Must be called before compile(). Safe to call multiple times (restarts the client).
+ * Must be called before implement(). Safe to call multiple times (restarts the client).
  */
 export async function initAgent(opts: {
   githubToken: string;
@@ -88,16 +88,16 @@ export async function initAgent(opts: {
 }
 
 /**
- * Run the Copilot agent to compile a markdown blueprint.
+ * Run the Copilot agent to implement a markdown blueprint.
  * The agent writes files to the workspace folder using its tools.
  * Events are emitted via the handler for streaming progress to UIs.
  */
-export async function compileWithAgent(opts: {
+export async function implementWithAgent(opts: {
   model: string;
   markdown: string;
   workspaceFolder: string;
   systemPrompt?: string;
-  onEvent: CompileEventHandler;
+  onEvent: ImplementEventHandler;
 }): Promise<{ ok: boolean; error?: string }> {
   if (!copilotClient) {
     return { ok: false, error: 'Copilot agent not initialized. Please sign in.' };
@@ -337,7 +337,7 @@ export async function compileWithAgent(opts: {
 
     // Use send() + manual idle tracking with an activity-based timeout.
     // Instead of a single total timeout, we reset the timer on every event
-    // so long-running but active compilations don't get killed.
+    // so long-running but active implementations don't get killed.
     const result = await new Promise<{ ok: boolean; error?: string; content?: string }>((resolve) => {
       let activityTimer: ReturnType<typeof setTimeout>;
       let lastResponse: any;
@@ -395,7 +395,7 @@ export async function compileWithAgent(opts: {
 
     // Check what files were modified in the workspace
     opts.onEvent({ type: 'files_changed', data: { workspaceFolder: opts.workspaceFolder } });
-    opts.onEvent({ type: 'done', message: 'Compilation complete' });
+    opts.onEvent({ type: 'done', message: 'Implementation complete' });
 
     return { ok: true };
   } catch (err) {

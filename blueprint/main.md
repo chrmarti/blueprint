@@ -166,10 +166,11 @@ The output panel orchestrates transformation of the authored markdown into runna
 
 ### Requirements
 
-- A **Implement** button that sends the current markdown content to the Copilot SDK agent.
+- A **Implement** button that invokes the Copilot SDK agent on the workspace's `blueprint.md`.
 - The SDK prompt is constructed by combining:
   - The system prompt defined in [harness.md](harness.md).
-  - The full markdown document as the user message.
+  - The contents of `blueprint.md` (appended to the system prompt at implement time by `electron.ts`).
+  - The contents of `blueprint.md` as the user message.
 - The agent writes files directly to the workspace folder via its tools; the output panel uses an xterm.js terminal to display agent output with full ANSI escape code rendering (colors, formatting from the Copilot CLI). All agent events (tool calls, usage, turns, errors) are interleaved with streamed text in the terminal.
 - Structured agent events (tool starts with all arguments shown as key=value, completions, file changes) update both the terminal log and the status bar in real time.
 - The file tree auto-refreshes when the agent signals `files_changed`.

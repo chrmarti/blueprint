@@ -37,6 +37,7 @@ export function initFileBrowser(opts: {
 
   document.getElementById('new-file-btn')?.addEventListener('click', () => createNewEntry('file'));
   document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewEntry('folder'));
+  document.getElementById('refresh-btn')?.addEventListener('click', () => refreshTree());
   document.getElementById('delete-btn')?.addEventListener('click', () => deleteSelectedEntry());
 
   if (window.electronAPI) {

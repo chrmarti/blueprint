@@ -14,6 +14,29 @@ let mainWindow: BrowserWindow | null = null;
 let workspaceFolder: string | null = null;
 let lastGithubToken: string | null = null;
 
+// ── Persist last workspace folder ───────────────────────────────────
+
+function getStatePath(): string {
+  return path.join(app.getPath('userData'), 'state.json');
+}
+
+function saveLastFolder(): void {
+  if (!workspaceFolder) return;
+  try {
+    fs.writeFileSync(getStatePath(), JSON.stringify({ lastFolder: workspaceFolder }), 'utf-8');
+  } catch {}
+}
+
+function loadLastFolder(): string | null {
+  try {
+    const data = JSON.parse(fs.readFileSync(getStatePath(), 'utf-8'));
+    if (data.lastFolder && fs.existsSync(data.lastFolder) && fs.statSync(data.lastFolder).isDirectory()) {
+      return data.lastFolder;
+    }
+  } catch {}
+  return null;
+}
+
 // ── HTTPS request helper ────────────────────────────────────────────
 
 function httpsRequest(
@@ -72,6 +95,7 @@ function setupIPC(): void {
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     workspaceFolder = result.filePaths[0];
+    saveLastFolder();
     mainWindow?.setTitle(`Blueprint Implementer — ${path.basename(workspaceFolder)}`);
     // Reinitialize agent with new workspace folder so its cwd is correct
     if (lastGithubToken) {
@@ -416,12 +440,12 @@ async function main(): Promise<void> {
     }
   }
 
-  // Default workspace folder for development
+  // Default workspace folder: restore last opened
   if (!workspaceFolder) {
-    const defaultFolder = '/Users/chrmarti/Development/repos/pacman';
-    if (fs.existsSync(defaultFolder) && fs.statSync(defaultFolder).isDirectory()) {
-      workspaceFolder = defaultFolder;
-    }
+    workspaceFolder = loadLastFolder();
+  }
+  if (workspaceFolder) {
+    saveLastFolder();
   }
 
   if (implementMode) {

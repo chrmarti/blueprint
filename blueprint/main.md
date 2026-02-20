@@ -123,6 +123,7 @@ The sidebar tab bar includes action buttons for file management:
 
 - **New File** (📄) — Creates a new file in the selected directory (or the current file's parent, or workspace root). Shows an inline text input in the tree at the correct position for entering the filename.
 - **New Folder** (📁) — Creates a new folder in the selected directory. Shows an inline text input; on commit, creates the folder (via a `.keep` placeholder file) and expands it.
+- **Refresh** (🔄) — Re-reads the workspace folder from disk and refreshes the file tree.
 - **Delete** (🗑️) — Deletes the selected directory or the currently open file. Shows a `confirm()` dialog describing what will be deleted (including "and all its contents" for folders). On confirmation, removes the entry via `electronAPI.deleteEntry`, clears the editor if the deleted path was open, and refreshes the tree.
 
 ### Git Tab

@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import https from 'node:https';
-import { initAgent, implementWithAgent, stopAgent } from './copilot-agent';
+import { initAgent, implementWithAgent, stopAgent, SYSTEM_PROMPT } from './copilot-agent';
 
 let mainWindow: BrowserWindow | null = null;
 let workspaceFolder: string | null = null;
@@ -187,7 +187,6 @@ function setupIPC(): void {
 
   ipcMain.handle('copilot:implement', async (_event, opts: {
     model: string;
-    systemPrompt: string;
     userPrompt: string;
   }) => {
     const folder = workspaceFolder || process.cwd();
@@ -195,12 +194,14 @@ function setupIPC(): void {
 
     // Include blueprint.md content in the system prompt so the agent has
     // project context without needing a tool call first (matches CLI behavior).
-    let systemPrompt = opts.systemPrompt;
+    // The default SYSTEM_PROMPT from copilot-agent.ts is used as the base;
+    // we only build a custom one here to append blueprint.md content.
+    let systemPrompt: string | undefined;
     const blueprintPath = path.join(folder, 'blueprint.md');
     if (fs.existsSync(blueprintPath)) {
       try {
         const blueprintContent = fs.readFileSync(blueprintPath, 'utf-8');
-        systemPrompt += `\n\nBelow is the project\'s blueprint.md from the workspace root:\n\n${blueprintContent}`;
+        systemPrompt = SYSTEM_PROMPT + `\n\nBelow is the project\'s blueprint.md from the workspace root:\n\n${blueprintContent}`;
       } catch {}
     }
 

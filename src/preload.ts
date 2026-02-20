@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   copilotModels: (copilotToken: string) => ipcRenderer.invoke('api:copilotModels', copilotToken),
   // Copilot SDK
   copilotInit: (githubToken: string) => ipcRenderer.invoke('copilot:init', githubToken),
-  copilotImplement: (opts: { model: string; systemPrompt: string; userPrompt: string }) =>
+  copilotImplement: (opts: { model: string; userPrompt: string }) =>
     ipcRenderer.invoke('copilot:implement', opts),
   copilotStop: () => ipcRenderer.invoke('copilot:stop'),
   onCopilotChunk: (callback: (delta: string) => void) => {

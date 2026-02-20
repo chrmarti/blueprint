@@ -34,7 +34,7 @@ interface ElectronAPI {
   copilotModels(copilotToken: string): Promise<ApiResponse>;
   // Copilot SDK
   copilotInit(githubToken: string): Promise<{ ok: boolean; error?: string }>;
-  copilotImplement(opts: { model: string; systemPrompt: string; userPrompt: string }): Promise<{ ok: boolean; content?: string; error?: string }>;
+  copilotImplement(opts: { model: string; userPrompt: string }): Promise<{ ok: boolean; content?: string; error?: string }>;
   copilotStop(): Promise<void>;
   onCopilotChunk(callback: (delta: string) => void): void;
   removeCopilotChunkListeners(): void;

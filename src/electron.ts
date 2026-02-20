@@ -120,6 +120,55 @@ function setupIPC(): void {
     }
   });
 
+  ipcMain.handle('fs:cleanWorkspace', async (_event, opts?: { dryRun?: boolean }) => {
+    if (!workspaceFolder) return { ok: false, error: 'No workspace folder open' };
+    const bpFilePath = path.join(workspaceFolder, '.blueprintfiles');
+    if (!fs.existsSync(bpFilePath)) return { ok: false, error: 'No .blueprintfiles found in workspace root' };
+
+    // Parse .blueprintfiles: one relative path per line, # comments, blank lines ignored
+    const raw = fs.readFileSync(bpFilePath, 'utf-8');
+    const keepSet = new Set<string>();
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      keepSet.add(trimmed.replace(/\/$/, '')); // normalise: strip trailing slash
+    }
+    // Always keep .blueprintfiles itself and .git
+    keepSet.add('.blueprintfiles');
+    keepSet.add('.git');
+
+    // Collect root entries to delete
+    const entries = fs.readdirSync(workspaceFolder);
+    const toDelete: string[] = [];
+    for (const name of entries) {
+      if (keepSet.has(name)) continue;
+      toDelete.push(name);
+    }
+
+    if (opts?.dryRun) return { ok: true, toDelete };
+
+    if (toDelete.length === 0) return { ok: true, deleted: [] };
+
+    // Disable asar handling so .asar files inside node_modules etc. are
+    // deleted as plain files rather than being treated as directories.
+    const prevAsar = process.noAsar;
+    process.noAsar = true;
+    try {
+      for (const name of toDelete) {
+        const full = path.join(workspaceFolder, name);
+        const stat = fs.statSync(full);
+        if (stat.isDirectory()) {
+          fs.rmSync(full, { recursive: true, force: true });
+        } else {
+          fs.unlinkSync(full);
+        }
+      }
+    } finally {
+      process.noAsar = prevAsar;
+    }
+    return { ok: true, deleted: toDelete };
+  });
+
   ipcMain.handle('dialog:saveFile', async (_event, defaultName: string) => {
     const result = await dialog.showSaveDialog(mainWindow!, {
       defaultPath: workspaceFolder

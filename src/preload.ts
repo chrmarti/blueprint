@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('fs:writeFile', filePath, content),
   deleteEntry: (targetPath: string) => ipcRenderer.invoke('fs:delete', targetPath),
+  cleanWorkspace: (opts?: { dryRun?: boolean }) => ipcRenderer.invoke('fs:cleanWorkspace', opts),
   getWorkspaceFolder: () => ipcRenderer.invoke('workspace:getFolder'),
   showSaveDialog: (defaultName: string) =>
     ipcRenderer.invoke('dialog:saveFile', defaultName),

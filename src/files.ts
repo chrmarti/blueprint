@@ -226,6 +226,50 @@ export async function saveCurrentFile(content: string): Promise<void> {
   await window.electronAPI.writeFile(currentFilePath, content);
 }
 
+// ── Clean workspace ─────────────────────────────────────────────────
+
+export async function cleanWorkspace(): Promise<void> {
+  if (!window.electronAPI || !workspaceFolder) {
+    alert('No workspace folder open.');
+    return;
+  }
+
+  // Ask the backend for a preview (it sees all entries including dotfiles)
+  const preview = await window.electronAPI.cleanWorkspace({ dryRun: true });
+  if (!preview.ok) {
+    alert(preview.error || 'Clean failed');
+    return;
+  }
+
+  const toDelete = preview.toDelete || [];
+  if (toDelete.length === 0) {
+    alert('Nothing to clean — all files match .blueprintfiles.');
+    return;
+  }
+
+  const msg = `Delete ${toDelete.length} file(s)/folder(s) not listed in .blueprintfiles?\n\n` +
+    toDelete.join('\n') +
+    '\n\nThis cannot be undone.';
+  if (!confirm(msg)) return;
+
+  const result = await window.electronAPI.cleanWorkspace();
+  if (!result.ok) {
+    alert('Clean failed: ' + (result.error || 'Unknown error'));
+    return;
+  }
+
+  // If current file was deleted, clear editor
+  if (currentFilePath) {
+    const relPath = currentFilePath.slice(workspaceFolder.length + 1).split('/')[0];
+    if (result.deleted?.includes(relPath)) {
+      currentFilePath = null;
+      onFileOpen('', '');
+    }
+  }
+  selectedDir = null;
+  await renderTree();
+}
+
 // ── Delete file / folder ────────────────────────────────────────────
 
 async function deleteSelectedEntry(): Promise<void> {

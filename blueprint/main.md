@@ -96,6 +96,7 @@ See [harness.md](harness.md) for the shared Copilot agent module, SDK IPC, loggi
 - `fs:readFile` — Reads a file's UTF-8 content.
 - `fs:writeFile` — Writes UTF-8 content to a file (creates parent directories as needed).
 - `fs:delete` — Deletes a file or folder (recursive for directories).
+- `fs:cleanWorkspace` — Reads `.blueprintfiles` from the workspace root, parses the list of files/folders to keep, and deletes all other root-level entries. Always preserves `.blueprintfiles` itself and `.git`. Returns `{ ok, deleted[], error }`.
 - `dialog:saveFile` — Opens a native save dialog, returns the chosen path.
 
 ### Preload Script
@@ -136,7 +137,27 @@ See [git.md](git.md) for details.
 - **Autosave**: The editor autosaves to disk on every keystroke with a 500ms debounce via `electronAPI.writeFile`.
 - **Save Output**: A save button (💾) in the implementation panel header opens a native save dialog to write implemented HTML to disk.
 - **Delete**: The 🗑️ toolbar button deletes the selected folder or current file after confirmation.
+- **Clean**: The 🗑 Clean button in the main toolbar removes all files and folders in the workspace root that are not listed in `.blueprintfiles`. Shows a confirmation dialog listing exactly which entries will be deleted. If no `.blueprintfiles` exists, shows an alert prompting the user to create one.
 - **Keyboard**: Cmd+S saves the current file to disk immediately.
+
+## Blueprint Files
+
+A `.blueprintfiles` file in the workspace root declares which files and folders are part of the blueprint and should be preserved during a Clean operation. Format:
+
+- Plain text, one relative path per line.
+- Lines starting with `#` are comments.
+- Blank lines are ignored.
+- Trailing `/` on directory names is optional (stripped during parsing).
+- `.blueprintfiles` itself and `.git` are always preserved implicitly.
+
+Example:
+```
+# Core blueprint
+blueprint.md
+blueprint/
+```
+
+The **Clean** action in the toolbar reads this file, computes which root-level entries are not listed, shows a confirmation dialog with the list, and deletes them on confirmation.
 
 ## Editor Panel
 
@@ -211,7 +232,7 @@ The Browser tab in the Editor panel provides an embedded web browser for preview
 - Default layout: three-column, resizable via drag handles. Left to right: **Sidebar** (Files and Git tabs), **Editor** (Edit and Browser tabs, center), **Output** (right).
 - On window resize, the center Editor panel grows and shrinks horizontally while the left (Sidebar) and right (Output) panels remain fixed in width.
 - Collapsible panels: each panel can be minimized to a labeled tab on the edge of the viewport.
-- A top toolbar contains: application title, open-folder button, folder name, implement button, layout toggles, and a settings gear icon.
+- A top toolbar contains: application title, open-folder button, folder name, implement button, clean button, layout toggles, and a settings gear icon.
 
 ### Settings
 

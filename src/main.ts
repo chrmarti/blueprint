@@ -10,7 +10,7 @@ import { initLayout } from './layout';
 import { initSettings, applyTheme, updateAuthUI } from './settings';
 import { loadOutput, loadSettings, saveSettings } from './storage';
 import { initAuth } from './auth';
-import { initFileBrowser, saveCurrentFile, promptOpenFolder } from './files';
+import { initFileBrowser, saveCurrentFile, promptOpenFolder, cleanWorkspace } from './files';
 
 async function boot(): Promise<void> {
   // Initialize file browser (uses Electron IPC for disk access)
@@ -90,6 +90,11 @@ async function boot(): Promise<void> {
   // Toolbar: implement
   document.getElementById('implement-btn')?.addEventListener('click', () => {
     implement(getContent());
+  });
+
+  // Toolbar: clean workspace
+  document.getElementById('clean-btn')?.addEventListener('click', () => {
+    cleanWorkspace();
   });
 
   // Toolbar: save output to file

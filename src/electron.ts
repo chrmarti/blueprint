@@ -9,10 +9,12 @@ import * as fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import https from 'node:https';
 import { initAgent, implementWithAgent, stopAgent, SYSTEM_PROMPT } from './copilot-agent';
+import * as pty from 'node-pty';
 
 let mainWindow: BrowserWindow | null = null;
 let workspaceFolder: string | null = null;
 let lastGithubToken: string | null = null;
+let shellProcess: pty.IPty | null = null;
 
 // ── Persist last workspace folder ───────────────────────────────────
 
@@ -321,6 +323,45 @@ function setupIPC(): void {
         resolve(entries);
       });
     });
+  });
+
+  // ── Terminal ────────────────────────────────────────────────────
+
+  ipcMain.handle('terminal:spawn', async () => {
+    if (shellProcess) {
+      shellProcess.kill();
+      shellProcess = null;
+    }
+    const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/zsh';
+    const cwd = workspaceFolder || process.cwd();
+    shellProcess = pty.spawn(shell, [], {
+      name: 'xterm-256color',
+      cols: 80,
+      rows: 24,
+      cwd,
+      env: process.env as Record<string, string>,
+    });
+    shellProcess.onData((data: string) => {
+      mainWindow?.webContents.send('terminal:data', data);
+    });
+    shellProcess.onExit(() => {
+      mainWindow?.webContents.send('terminal:exit');
+      shellProcess = null;
+    });
+    return { ok: true };
+  });
+
+  ipcMain.handle('terminal:write', async (_event, data: string) => {
+    shellProcess?.write(data);
+  });
+
+  ipcMain.handle('terminal:resize', async (_event, cols: number, rows: number) => {
+    shellProcess?.resize(cols, rows);
+  });
+
+  ipcMain.handle('terminal:kill', async () => {
+    shellProcess?.kill();
+    shellProcess = null;
   });
 }
 

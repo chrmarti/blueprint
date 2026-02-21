@@ -451,6 +451,35 @@
       min-height: 0;
     }
 
+    /* Terminal panel */
+    #terminal-panel {
+      height: 200px;
+      min-height: 60px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+    #terminal-panel .panel-header {
+      padding: 4px 12px;
+    }
+    #terminal-container {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+    #terminal-container .xterm {
+      padding: 4px;
+    }
+    .drag-handle-h {
+      height: 5px;
+      cursor: row-resize;
+      background: var(--border);
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    .drag-handle-h:hover, .drag-handle-h.active { background: var(--accent); }
+
     /* Preview/Edit tabs */
     .editor-tabs {
       display: flex;
@@ -538,37 +567,46 @@
           <button id="tab-browser">Browser</button>
         </div>
       </div>
-      <div class="panel-body" style="display: flex;">
-        <div id="sidebar">
-          <div class="sidebar-tabs">
-            <button class="active" id="sidebar-files">Files</button>
-            <button id="sidebar-git">Git</button>
-            <span class="sidebar-actions">
-              <button id="new-file-btn" title="New File">&#128196;</button>
-              <button id="new-folder-btn" title="New Folder">&#128193;</button>
-              <button id="refresh-btn" title="Refresh">&#128260;</button>
-              <button id="delete-btn" title="Delete">&#128465;</button>
-            </span>
+      <div class="panel-body" style="display: flex; flex-direction: column; min-height: 0;">
+        <div style="display: flex; flex: 1; min-height: 0;">
+          <div id="sidebar">
+            <div class="sidebar-tabs">
+              <button class="active" id="sidebar-files">Files</button>
+              <button id="sidebar-git">Git</button>
+              <span class="sidebar-actions">
+                <button id="new-file-btn" title="New File">&#128196;</button>
+                <button id="new-folder-btn" title="New Folder">&#128193;</button>
+                <button id="refresh-btn" title="Refresh">&#128260;</button>
+                <button id="delete-btn" title="Delete">&#128465;</button>
+              </span>
+            </div>
+            <div id="file-tree"></div>
+            <div id="git-status" style="display: none;"></div>
           </div>
-          <div id="file-tree"></div>
-          <div id="git-status" style="display: none;"></div>
+          <textarea id="editor-area" spellcheck="false" placeholder="Open a folder and select a file to start editing..."></textarea>
+          <div id="browser-view" style="display: none;">
+            <div id="viewport-controls">
+              <button class="active" data-width="100%">Desktop</button>
+              <button data-width="768px">Tablet</button>
+              <button data-width="375px">Mobile</button>
+            </div>
+            <div id="preview-address-bar">
+              <input id="preview-url" type="text" placeholder="Enter URL..." spellcheck="false" />
+              <button id="preview-refresh" title="Refresh">&#8635;</button>
+              <button id="preview-popout" title="Open in new tab">&#8599;</button>
+            </div>
+            <div class="browser-frame-container">
+              <iframe id="preview-frame" sandbox="allow-scripts allow-modals"></iframe>
+            </div>
+            <div id="console-log"></div>
+          </div>
         </div>
-        <textarea id="editor-area" spellcheck="false" placeholder="Open a folder and select a file to start editing..."></textarea>
-        <div id="browser-view" style="display: none;">
-          <div id="viewport-controls">
-            <button class="active" data-width="100%">Desktop</button>
-            <button data-width="768px">Tablet</button>
-            <button data-width="375px">Mobile</button>
+        <div class="drag-handle-h" id="terminal-drag-handle"></div>
+        <div id="terminal-panel">
+          <div class="panel-header">
+            <span>Terminal</span>
           </div>
-          <div id="preview-address-bar">
-            <input id="preview-url" type="text" placeholder="Enter URL..." spellcheck="false" />
-            <button id="preview-refresh" title="Refresh">&#8635;</button>
-            <button id="preview-popout" title="Open in new tab">&#8599;</button>
-          </div>
-          <div class="browser-frame-container">
-            <iframe id="preview-frame" sandbox="allow-scripts allow-modals"></iframe>
-          </div>
-          <div id="console-log"></div>
+          <div id="terminal-container"></div>
         </div>
       </div>
     </div>

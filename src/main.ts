@@ -11,6 +11,7 @@ import { initSettings, applyTheme, updateAuthUI } from './settings';
 import { loadOutput, loadSettings, saveSettings } from './storage';
 import { initAuth } from './auth';
 import { initFileBrowser, saveCurrentFile, promptOpenFolder, cleanWorkspace } from './files';
+import { initTerminalPanel, spawnTerminal, updateTerminalTheme } from './terminal';
 
 async function boot(): Promise<void> {
   // Initialize file browser (uses Electron IPC for disk access)
@@ -38,6 +39,8 @@ async function boot(): Promise<void> {
   initPreview();
   initLayout();
   initSettings();
+  initTerminalPanel();
+  spawnTerminal();
 
   // Initialize GitHub auth
   initAuth({
@@ -83,8 +86,9 @@ async function boot(): Promise<void> {
   }
 
   // Toolbar: open folder
-  document.getElementById('open-folder-btn')?.addEventListener('click', () => {
-    promptOpenFolder();
+  document.getElementById('open-folder-btn')?.addEventListener('click', async () => {
+    await promptOpenFolder();
+    spawnTerminal();
   });
 
   // Toolbar: implement
@@ -109,6 +113,7 @@ async function boot(): Promise<void> {
     saveSettings(s);
     applyTheme(s.theme);
     updateTermTheme();
+    updateTerminalTheme();
   });
 
   // Keyboard shortcuts

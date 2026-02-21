@@ -34,6 +34,7 @@ The long-term goal is **self-hosting**: this tool is itself defined by a markdow
   settings.ts         ← settings modal, history drawer, theme, import/export
   storage.ts          ← localStorage persistence layer (settings, history)
   files.ts            ← sidebar module (Files and Git tabs, tree view, open/save via IPC)
+  terminal.ts         ← integrated terminal panel (xterm.js + node-pty IPC)
   auth.ts             ← GitHub OAuth device flow + Copilot token management
   implement-cli.ts      ← standalone CLI implement tool (no Electron)
   types.d.ts          ← global type declarations (ElectronAPI)
@@ -45,7 +46,7 @@ The long-term goal is **self-hosting**: this tool is itself defined by a markdow
   preload.cjs         ← bundled preload script (CJS)
   implement-cli.mjs     ← bundled CLI implement tool (ESM)
   main.md             ← copied from /blueprint for reference
-package.json          ← dependencies: electron, esbuild, typescript, marked, @xterm/xterm, @github/copilot-sdk, @github/copilot
+package.json          ← dependencies: electron, esbuild, typescript, marked, @xterm/xterm, node-pty, @github/copilot-sdk, @github/copilot
 tsconfig.json         ← TypeScript config (target ES2020, bundler resolution)
 build.mjs             ← build script: esbuild bundles + file copy
 ```
@@ -55,7 +56,7 @@ build.mjs             ← build script: esbuild bundles + file copy
 The application is an Electron desktop app composed of three primary regions in a single window:
 
 1. **Sidebar** (left) — A file browser with **Files** and **Git** tabs, plus toolbar actions for creating/deleting files and folders.
-2. **Editor Panel** (center) — A tabbed view with **Edit** (markdown textarea) and **Browser** (embedded iframe with address bar) tabs. Direct disk I/O with autosave.
+2. **Editor Panel** (center) — A tabbed view with **Edit** (markdown textarea) and **Browser** (embedded iframe with address bar) tabs, with an integrated terminal panel at the bottom. Direct disk I/O with autosave.
 3. **Output Panel** (right) — Controls for invoking the Copilot SDK agent, with streaming terminal output (xterm.js), error display, and save-to-file.
 
 ### Technology Stack
@@ -65,6 +66,7 @@ The application is an Electron desktop app composed of three primary regions in 
 - **Markdown Engine**: `marked` (npm) for rendering and structural analysis.
 - **Terminal Output**: `@xterm/xterm` (xterm.js) for rendering implementation output with full ANSI escape code support (colors, formatting from the Copilot CLI).
 - **Implementation Backend**: GitHub Copilot SDK (`@github/copilot-sdk`), which communicates with the Copilot CLI (`@github/copilot`) via JSON-RPC. The SDK handles authentication, model selection, and agent tool execution. A shared module (`copilot-agent.ts`) encapsulates the SDK lifecycle and is used by both the Electron main process and the standalone CLI. The agent creates/updates files directly in the workspace folder via its built-in tools. Events (tool calls, progress, errors) are relayed to UIs via typed callbacks.
+- **Terminal Emulation**: `node-pty` for pseudo-terminal in the main process, `@xterm/xterm` for rendering in the renderer.
 - **File System**: Electron IPC (`ipcMain.handle` / `ipcRenderer.invoke`) for reading directories, reading files, writing files, and showing native dialogs.
 - **Runtime Sandbox**: An iframe with `srcdoc` and `sandbox="allow-scripts allow-modals"` for rendering and executing implemented output in isolation.
 - **Build Tooling**: esbuild for bundling (renderer IIFE + main CJS + preload CJS), TypeScript for type checking.
@@ -88,6 +90,10 @@ See [auth.md](auth.md) for the authentication API proxy endpoints. The renderer 
 
 See [harness.md](harness.md) for the shared Copilot agent module, SDK IPC, logging, and system prompt details.
 
+### Integrated Terminal
+
+See [terminal.md](terminal.md) for the integrated terminal panel, node-pty IPC, and lifecycle details.
+
 ### IPC Handlers
 
 - `dialog:openFolder` — Opens a native folder picker, returns the selected path.
@@ -96,7 +102,7 @@ See [harness.md](harness.md) for the shared Copilot agent module, SDK IPC, loggi
 - `fs:readFile` — Reads a file's UTF-8 content.
 - `fs:writeFile` — Writes UTF-8 content to a file (creates parent directories as needed).
 - `fs:delete` — Deletes a file or folder (recursive for directories).
-- `fs:cleanWorkspace` — Reads `.blueprintfiles` from the workspace root, parses the list of files/folders to keep, and deletes all other root-level entries. Always preserves `.blueprintfiles` itself and `.git`. Returns `{ ok, deleted[], error }`.
+- `fs:cleanWorkspace` — Reads `.blueprintfiles` from the workspace root, parses the list of files/folders to keep, and deletes all other root-level entries. Always preserves `.blueprintfiles` itself and `.git`. Returns `{ ok, deleted[], error }`. Supports `{ dryRun: true }` to preview deletions without executing them.
 - `dialog:saveFile` — Opens a native save dialog, returns the chosen path.
 
 ### Preload Script
@@ -307,7 +313,7 @@ The initial bootstrap version is the TypeScript implementation under `/src`, com
 - The Electron main process and CLI both use the shared `copilot-agent.ts` module for implementation, which wraps the Copilot SDK (`@github/copilot-sdk`) and manages the Copilot CLI (`@github/copilot`) process automatically. The agent writes files directly to the workspace folder. Authentication IPC still uses Node.js `https` directly.
 - The renderer loads `index.html` directly from disk via `loadFile()`.
 - A folder can be passed on the command line: `npm start -- /path/to/folder`.
-- No build-time framework dependencies beyond electron, esbuild, typescript, marked, and @xterm/xterm.
+- No build-time framework dependencies beyond electron, esbuild, typescript, marked, @xterm/xterm, and node-pty.
 
 ### CLI Implement Tool
 

@@ -55,5 +55,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('command:implement', (_event, filePath: string | null) => callback(filePath));
   },
   gitStatus: () => ipcRenderer.invoke('git:status'),
+
+  // Terminal
+  terminalSpawn: () => ipcRenderer.invoke('terminal:spawn'),
+  terminalWrite: (data: string) => ipcRenderer.invoke('terminal:write', data),
+  terminalResize: (cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', cols, rows),
+  terminalKill: () => ipcRenderer.invoke('terminal:kill'),
+  onTerminalData: (callback: (data: string) => void) => {
+    ipcRenderer.on('terminal:data', (_event, data: string) => callback(data));
+  },
+  removeTerminalDataListeners: () => {
+    ipcRenderer.removeAllListeners('terminal:data');
+  },
+  onTerminalExit: (callback: () => void) => {
+    ipcRenderer.on('terminal:exit', () => callback());
+  },
+  removeTerminalExitListeners: () => {
+    ipcRenderer.removeAllListeners('terminal:exit');
+  },
+
   platform: process.platform,
 });

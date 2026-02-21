@@ -47,6 +47,17 @@ interface ElectronAPI {
   onMenuOpenFolder(callback: () => void): void;
   onAutoImplement(callback: (filePath: string | null) => void): void;
   gitStatus(): Promise<{ status: string; file: string }[]>;
+
+  // Terminal
+  terminalSpawn(): Promise<{ ok: boolean; error?: string }>;
+  terminalWrite(data: string): Promise<void>;
+  terminalResize(cols: number, rows: number): Promise<void>;
+  terminalKill(): Promise<void>;
+  onTerminalData(callback: (data: string) => void): void;
+  removeTerminalDataListeners(): void;
+  onTerminalExit(callback: () => void): void;
+  removeTerminalExitListeners(): void;
+
   platform: string;
 }
 

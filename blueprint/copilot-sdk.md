@@ -66,7 +66,7 @@ new CopilotClient({
 
 ```ts
 client.createSession({
-  model: 'claude-opus-4.6',
+  model: 'claude-opus-4.5',
   streaming: true,
   workingDirectory: '/path/to/project',  // agent's file tools operate here
   systemMessage: { mode: 'append', content: '...' },

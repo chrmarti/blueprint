@@ -27,7 +27,7 @@ export interface ImplementationEntry {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  model: 'claude-opus-4.6',
+  model: 'claude-opus-4.5',
   temperature: 0,
   maxTokens: 16000,
   fontSize: 14,

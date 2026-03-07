@@ -127,7 +127,7 @@ async function commandClean(args: string[]): Promise<void> {
 
 async function commandImplement(args: string[]): Promise<void> {
   let workspaceArg: string | null = null;
-  let model = 'claude-opus-4.6';
+  let model = 'claude-opus-4.5';
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--model' && args[i + 1]) {
@@ -285,7 +285,7 @@ Reads blueprint.md from the workspace root and any .md files from blueprint/ (if
 present), then implements them into generated code using the Copilot agent.
 
 Options:
-  --model <model>    Model to use (default: claude-opus-4.6)
+  --model <model>    Model to use (default: claude-opus-4.5)
   -h, --help         Show this help`;
 
 const CLEAN_HELP = `Usage: blueprint clean <workspace-folder> [options]

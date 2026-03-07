@@ -1,0 +1,39 @@
+name: Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and install CLI
+        run: npm run install-cli
+
+      - name: Clean project
+        run: blueprint clean .
+
+      - name: Implement project
+        env:
+          GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
+        run: blueprint implement .
+
+      - name: Build project
+        run: |
+          npm install
+          npm run package
+
+      - name: Upload .app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Blueprint-macOS
+          path: release/Blueprint-darwin-arm64/Blueprint.app

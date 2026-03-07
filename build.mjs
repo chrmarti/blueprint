@@ -47,6 +47,13 @@ await esbuild.build({
   external: ['electron'],
 });
 
+// When bundling CJS dependencies (like vscode-jsonrpc) into ESM, esbuild
+// emits `require()` calls for Node builtins. Inject a shim via banner.
+const esmRequireShim = `
+import { createRequire as __createRequire } from 'node:module';
+const require = __createRequire(import.meta.url);
+`;
+
 // Bundle CLI implement tool
 await esbuild.build({
   entryPoints: ['src/implement-cli.ts'],
@@ -57,7 +64,7 @@ await esbuild.build({
   target: 'node22',
   sourcemap: true,
   minify: false,
-  external: ['@github/copilot-sdk'],
+  banner: { js: esmRequireShim },
 });
 
 // Bundle CLI for npm package (with shebang)
@@ -70,8 +77,7 @@ await esbuild.build({
   target: 'node22',
   sourcemap: false,
   minify: false,
-  external: ['@github/copilot-sdk'],
-  banner: { js: '#!/usr/bin/env node' },
+  banner: { js: '#!/usr/bin/env node\n' + esmRequireShim },
 });
 
 // Copy HTML

@@ -12,7 +12,7 @@
     "LICENSE.txt"
   ],
   "dependencies": {
-    "@github/copilot-sdk": "^0.1.23"
+    "@github/copilot": "^0.0.403"
   },
   "engines": {
     "node": ">=22.0.0"

@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 // CLI tool for implementing a workspace using the Copilot SDK agent.
-// Usage: blueprint <workspace-folder>
+// Usage: blueprint implement <workspace-folder>
 //
 // The workspace folder should contain a blueprint.md in its root describing
 // the project's folder structure, tools, and processes. Additional .md files
@@ -14,7 +14,8 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { initAgent, implementWithAgent, stopAgent, checkHealth, SYSTEM_PROMPT } from './copilot-agent.js';
+import { initAgent, implementWithAgent, stopAgent, checkHealth, listModels, SYSTEM_PROMPT } from './copilot-agent.js';
+import { cleanWorkspace } from './clean.js';
 
 /** Recursively read all .md files under a directory and concatenate them. */
 function readMarkdownFiles(dir: string): { files: string[]; content: string } {
@@ -40,25 +41,91 @@ function readMarkdownFiles(dir: string): { files: string[]; content: string } {
   return { files, content: content.trim() };
 }
 
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+function getAppRoot(): string {
+  const scriptDir = path.dirname(new URL(import.meta.url).pathname);
+  // When globally installed, node_modules is inside the script's directory.
+  // When running from the dev workspace (dist/), node_modules is one level up.
+  if (fs.existsSync(path.join(scriptDir, 'node_modules'))) {
+    return scriptDir;
+  }
+  return path.dirname(scriptDir);
+}
 
-  if (args.includes('--help') || args.includes('-h')) {
-    console.log(`Usage: blueprint <workspace-folder>
+function requireGitHubToken(): string {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) {
+    console.error('Error: GITHUB_TOKEN environment variable is required');
+    console.error('Set it with: export GITHUB_TOKEN=$(gh auth token)');
+    process.exit(1);
+  }
+  return token;
+}
 
-Reads blueprint.md from the workspace root and any .md files from blueprint/ (if
-present), then implements them into generated code using the Copilot agent.
+async function commandModels(): Promise<void> {
+  const githubToken = requireGitHubToken();
+  const initResult = await initAgent({ githubToken, appRoot: getAppRoot() });
+  if (!initResult.ok) {
+    console.error(`Failed to initialize agent: ${initResult.error}`);
+    process.exit(1);
+  }
+  const models = await listModels();
+  for (const m of models) {
+    console.log(`${m.id}  ${m.name}`);
+  }
+  await stopAgent();
+}
 
-Options:
-  --model <model>    Model to use (default: claude-opus-4.6)
-  -h, --help         Show this help
+async function commandClean(args: string[]): Promise<void> {
+  let workspaceArg: string | null = null;
+  const dryRun = args.includes('--dry-run');
 
-Environment:
-  GITHUB_TOKEN       GitHub personal access token (required)`);
-    process.exit(0);
+  for (const arg of args) {
+    if (!arg.startsWith('-')) {
+      workspaceArg = arg;
+      break;
+    }
   }
 
-  // Parse arguments
+  if (!workspaceArg) {
+    console.error('Error: No workspace folder specified');
+    console.error('Usage: blueprint clean <workspace-folder> [--dry-run]');
+    process.exit(1);
+  }
+
+  const workspaceFolder = path.resolve(workspaceArg);
+  if (!fs.existsSync(workspaceFolder) || !fs.statSync(workspaceFolder).isDirectory()) {
+    console.error(`Error: Not a directory: ${workspaceFolder}`);
+    process.exit(1);
+  }
+
+  const result = cleanWorkspace(workspaceFolder, { dryRun });
+  if (!result.ok) {
+    console.error(`Error: ${result.error}`);
+    process.exit(1);
+  }
+
+  if (dryRun) {
+    if (result.toDelete?.length) {
+      console.log('Would delete:');
+      for (const name of result.toDelete) {
+        console.log(`  ${name}`);
+      }
+    } else {
+      console.log('Nothing to delete.');
+    }
+  } else {
+    if (result.deleted?.length) {
+      console.log(`Deleted ${result.deleted.length} entries:`);
+      for (const name of result.deleted) {
+        console.log(`  ${name}`);
+      }
+    } else {
+      console.log('Nothing to delete.');
+    }
+  }
+}
+
+async function commandImplement(args: string[]): Promise<void> {
   let workspaceArg: string | null = null;
   let model = 'claude-opus-4.6';
 
@@ -72,7 +139,7 @@ Environment:
 
   if (!workspaceArg) {
     console.error('Error: No workspace folder specified');
-    console.error('Usage: blueprint <workspace-folder>');
+    console.error('Usage: blueprint implement <workspace-folder>');
     process.exit(1);
   }
 
@@ -102,13 +169,7 @@ Environment:
     }
   }
 
-  const githubToken = process.env.GITHUB_TOKEN;
-  if (!githubToken) {
-    console.error('Error: GITHUB_TOKEN environment variable is required');
-    console.error('Set it with: export GITHUB_TOKEN=$(gh auth token)');
-    process.exit(1);
-  }
-
+  const githubToken = requireGitHubToken();
   const ts = () => new Date().toISOString().slice(11, 23);
 
   console.log(`[${ts()}] Workspace: ${workspaceFolder}`);
@@ -116,9 +177,7 @@ Environment:
   console.log(`[${ts()}] Total markdown: ${markdown.length} chars`);
   console.log(`[${ts()}] Model: ${model}`);
 
-  // Determine project root (where node_modules is)
-  const scriptDir = path.dirname(new URL(import.meta.url).pathname);
-  const appRoot = path.dirname(scriptDir);
+  const appRoot = getAppRoot();
 
   // Initialize the Copilot agent
   console.log(`[${ts()}] Initializing agent...`);
@@ -200,6 +259,77 @@ Environment:
   }
 
   console.log(`[${ts()}] Done.`);
+}
+
+const HELP = `Usage: blueprint <command> [options]
+
+Commands:
+  implement <folder>   Implement a blueprint into code
+  clean <folder>       Remove generated files (keeps .blueprintfiles and .git)
+  models               List available models
+
+Options:
+  -h, --help           Show this help
+
+Run 'blueprint <command> --help' for command-specific help.
+
+Environment:
+  GITHUB_TOKEN         GitHub personal access token (required)`;
+
+const IMPLEMENT_HELP = `Usage: blueprint implement <workspace-folder> [options]
+
+Reads blueprint.md from the workspace root and any .md files from blueprint/ (if
+present), then implements them into generated code using the Copilot agent.
+
+Options:
+  --model <model>    Model to use (default: claude-opus-4.6)
+  -h, --help         Show this help`;
+
+const CLEAN_HELP = `Usage: blueprint clean <workspace-folder> [options]
+
+Removes all files and directories from the workspace except those listed in
+.blueprintfiles and the .git folder.
+
+Options:
+  --dry-run          Show what would be deleted without deleting
+  -h, --help         Show this help`;
+
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  const command = args[0];
+
+  if (!command || command === '--help' || command === '-h') {
+    console.log(HELP);
+    process.exit(0);
+  }
+
+  switch (command) {
+    case 'models':
+      await commandModels();
+      break;
+    case 'implement': {
+      const subArgs = args.slice(1);
+      if (subArgs.includes('--help') || subArgs.includes('-h')) {
+        console.log(IMPLEMENT_HELP);
+        process.exit(0);
+      }
+      await commandImplement(subArgs);
+      break;
+    }
+    case 'clean': {
+      const subArgs = args.slice(1);
+      if (subArgs.includes('--help') || subArgs.includes('-h')) {
+        console.log(CLEAN_HELP);
+        process.exit(0);
+      }
+      await commandClean(subArgs);
+      break;
+    }
+    default:
+      console.error(`Unknown command: ${command}`);
+      console.error(HELP);
+      process.exit(1);
+  }
 }
 
 main().catch((err) => {

@@ -456,3 +456,13 @@ export async function checkHealth(): Promise<{ state: string; pingMs?: number; e
 
 /** The default system prompt. Exported for use by callers. */
 export { SYSTEM_PROMPT };
+
+/**
+ * List available models from the Copilot API.
+ * Requires the client to be initialized first.
+ */
+export async function listModels(): Promise<{ id: string; name: string }[]> {
+  if (!copilotClient) throw new Error('Client not initialized');
+  const models = await copilotClient.listModels();
+  return models.map(m => ({ id: m.id, name: m.name }));
+}

@@ -36,3 +36,20 @@ npm test             # run tests
 npm run package      # build + package macOS .app to release/
 npm run install-cli  # build + globally install the CLI
 ```
+
+## CLI
+
+The project produces a standalone CLI (`blueprint`) published as an npm package from `cli/`.
+It uses subcommands:
+
+```
+blueprint implement <folder>              # implement a blueprint into code
+blueprint implement <folder> --model X    # use a specific model
+blueprint clean <folder>                  # remove generated files (keeps .blueprintfiles and .git)
+blueprint clean <folder> --dry-run        # preview what would be deleted
+blueprint models                          # list available models
+```
+
+Workspace cleanup is driven by a `.blueprintfiles` file in the workspace root listing
+paths to keep (one per line, `#` comments). The clean logic lives in `src/clean.ts` and
+is shared between the CLI and the Electron app.

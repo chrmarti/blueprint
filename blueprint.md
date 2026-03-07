@@ -53,3 +53,9 @@ blueprint models                          # list available models
 Workspace cleanup is driven by a `.blueprintfiles` file in the workspace root listing
 paths to keep (one per line, `#` comments). The clean logic lives in `src/clean.ts` and
 is shared between the CLI and the Electron app.
+
+The CLI bundles `@github/copilot-sdk` inline (not external) to avoid ESM resolution
+issues when installed globally. It only depends on `@github/copilot` at runtime for the
+copilot binary. A `createRequire` shim is injected via esbuild banner so bundled CJS
+code can `require()` Node builtins in the ESM output. The user prompt is prefixed with
+a directive to implement immediately without asking for confirmation.

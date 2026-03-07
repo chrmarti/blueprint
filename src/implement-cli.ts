@@ -169,6 +169,9 @@ async function commandImplement(args: string[]): Promise<void> {
     }
   }
 
+  // Wrap the blueprint content with a clear instruction to implement immediately
+  markdown = 'Implement the following blueprint now. Do not ask for confirmation — start immediately.\n\n' + markdown;
+
   const githubToken = requireGitHubToken();
   const ts = () => new Date().toISOString().slice(11, 23);
 

@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 // CLI tool for implementing a workspace using the Copilot SDK agent.
-// Usage: node dist/implement-cli.mjs <workspace-folder>
+// Usage: blueprint <workspace-folder>
 //
 // The workspace folder should contain a blueprint.md in its root describing
 // the project's folder structure, tools, and processes. Additional .md files
@@ -44,7 +44,7 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`Usage: node dist/implement-cli.mjs <workspace-folder>
+    console.log(`Usage: blueprint <workspace-folder>
 
 Reads blueprint.md from the workspace root and any .md files from blueprint/ (if
 present), then implements them into generated code using the Copilot agent.
@@ -72,7 +72,7 @@ Environment:
 
   if (!workspaceArg) {
     console.error('Error: No workspace folder specified');
-    console.error('Usage: node dist/implement-cli.mjs <workspace-folder>');
+    console.error('Usage: blueprint <workspace-folder>');
     process.exit(1);
   }
 

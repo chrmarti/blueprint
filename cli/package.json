@@ -1,0 +1,20 @@
+{
+  "name": "blueprint-implementer-cli",
+  "version": "0.1.0",
+  "description": "CLI tool for implementing workspaces from blueprint markdown files using the Copilot SDK agent",
+  "license": "SEE LICENSE IN LICENSE.txt",
+  "type": "module",
+  "bin": {
+    "blueprint": "./implement-cli.mjs"
+  },
+  "files": [
+    "implement-cli.mjs",
+    "LICENSE.txt"
+  ],
+  "dependencies": {
+    "@github/copilot-sdk": "^0.1.23"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

@@ -28,7 +28,7 @@ await esbuild.build({
   outfile: 'dist/electron.cjs',
   format: 'cjs',
   platform: 'node',
-  target: 'node18',
+  target: 'node22',
   sourcemap: true,
   minify: false,
   external: ['electron', '@github/copilot-sdk', 'node-pty'],
@@ -41,7 +41,7 @@ await esbuild.build({
   outfile: 'dist/preload.cjs',
   format: 'cjs',
   platform: 'node',
-  target: 'node18',
+  target: 'node22',
   sourcemap: true,
   minify: false,
   external: ['electron'],
@@ -54,14 +54,31 @@ await esbuild.build({
   outfile: 'dist/implement-cli.mjs',
   format: 'esm',
   platform: 'node',
-  target: 'node18',
+  target: 'node22',
   sourcemap: true,
   minify: false,
   external: ['@github/copilot-sdk'],
 });
 
+// Bundle CLI for npm package (with shebang)
+await esbuild.build({
+  entryPoints: ['src/implement-cli.ts'],
+  bundle: true,
+  outfile: 'cli/implement-cli.mjs',
+  format: 'esm',
+  platform: 'node',
+  target: 'node22',
+  sourcemap: false,
+  minify: false,
+  external: ['@github/copilot-sdk'],
+  banner: { js: '#!/usr/bin/env node' },
+});
+
 // Copy HTML
 fs.copyFileSync('src/index.html', 'dist/index.html');
+
+// Copy LICENSE to CLI package
+fs.copyFileSync('LICENSE.txt', 'cli/LICENSE.txt');
 
 // Copy xterm.js CSS
 fs.copyFileSync('node_modules/@xterm/xterm/css/xterm.css', 'dist/xterm.css');

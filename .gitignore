@@ -10,6 +10,10 @@ out/
 # Packaged app
 release/
 
+# CLI build output
+cli/implement-cli.mjs
+cli/LICENSE.txt
+
 # Environment files
 .env
 .env.local

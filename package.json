@@ -10,7 +10,8 @@
     "start": "electron .",
     "dev": "npm run build && npm run start",
     "implement": "node dist/implement-cli.mjs",
-    "package": "npm run build && electron-packager . Blueprint --platform=darwin --arch=arm64 --out=release --overwrite --ignore=\"^/(src|test|blueprint|tsconfig|build\\.mjs|playwright)\""
+    "install-cli": "npm run build && cd cli && npm pack && npm install -g blueprint-implementer-cli-0.1.0.tgz && rm blueprint-implementer-cli-0.1.0.tgz",
+    "package": "npm run build && electron-packager . Blueprint --platform=darwin --arch=arm64 --out=release --overwrite --ignore=\"^/(src|test|cli|blueprint|tsconfig|build\\.mjs|playwright)\""
   },
   "devDependencies": {
     "@electron/packager": "^19.0.5",

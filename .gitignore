@@ -7,6 +7,9 @@ dist/
 build/
 out/
 
+# Packaged app
+release/
+
 # Environment files
 .env
 .env.local

@@ -19,6 +19,11 @@ jobs:
       - name: Build and install CLI
         run: npm run install-cli
 
+      - name: List models
+        env:
+          GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
+        run: blueprint models
+
       - name: Clean project
         run: blueprint clean .
 

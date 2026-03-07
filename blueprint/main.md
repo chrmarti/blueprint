@@ -251,6 +251,10 @@ Accessible via gear icon in the toolbar:
 - Export full project state (markdown + implemented output + settings) as a JSON bundle.
 - Import project state from a JSON bundle.
 
+#### Verification
+
+The settings modal can be dismissed with Esc or a click on its close toolbar button.
+
 ## Testing
 
 Automated end-to-end tests use Playwright's Electron support to launch the app and verify all basic functionality. Tests live in `/test` and are run with Node.js directly (no test framework needed). A GitHub token is required for tests that exercise implementation. Locally the GitHub CLI can be used to get a token, in CI the GITHUB_TOKEN env variable must be set.

@@ -11,9 +11,13 @@ The application uses the GitHub OAuth device flow to authenticate users and acce
 
 1. User clicks "Sign in with GitHub" in the toolbar or settings.
 2. The app requests a device code from GitHub via IPC (`api:authDeviceCode`).
-3. A one-time code is displayed; the user copies it and opens GitHub's verification page.
+3. A one-time code is displayed and copied to the clipboard; GitHub's verification page is opened.
 4. The app polls for authorization (`api:authToken`) until the user completes sign-in.
 5. On success, the GitHub access token is stored in `localStorage`.
+
+### Verification
+
+- The sign button in the toolbar can be clicked.
 
 ## Copilot Token
 

@@ -70,11 +70,63 @@ You have a custom tool available: open_in_preview_browser. Call it with a URL (e
 
 The `copilot-agent.ts` module is the shared implementation backend, used by both the Electron main process and the standalone CLI. It wraps the Copilot SDK:
 
-- `initAgent({ githubToken, appRoot })` — Dynamically imports `@github/copilot-sdk` (ESM-only, loaded via `await import()`), creates a `CopilotClient` pointing to the CLI binary, and starts it. Safe to call multiple times (restarts the client).
+- `initAgent({ githubToken, appRoot })` — Dynamically imports `@github/copilot-sdk` (ESM-only, loaded via `await import()`), resolves the copilot CLI binary (preferring the platform-specific native binary at `@github/copilot-<platform>-<arch>/copilot`), wraps it in the safehouse sandbox (see below), and starts it. Safe to call multiple times (restarts the client).
 - `implementWithAgent({ model, markdown, workspaceFolder, systemPrompt?, onEvent })` — Creates a streaming session with `environment: { cwd: workspaceFolder }` so the agent's file tools operate in the project folder. Attaches a wildcard event listener that emits typed `ImplementEvent`s (`log`, `chunk`, `tool_start`, `tool_complete`, `usage`, `error`, `done`, `files_changed`). Calls `sendAndWait()` with a 600-second timeout. Returns `{ ok, error? }`.
 - `stopAgent()` — Destroys the active session and stops the client.
 
 The module uses `import type` for compile-time SDK types and `await import('@github/copilot-sdk')` at runtime, since the SDK is ESM-only and the Electron main process is bundled as CJS.
+
+## Sandbox (Safehouse)
+
+The Copilot CLI runs inside an [agent-safehouse](https://github.com/eugene1g/agent-safehouse) sandbox on macOS. Safehouse uses macOS Seatbelt (`sandbox-exec`) to enforce a deny-by-default policy that restricts the agent's filesystem access, process execution, and other system calls.
+
+### Setup
+
+The safehouse script is downloaded during `npm install` via a `postinstall` script in `package.json`:
+
+```
+mkdir -p scripts && curl -fsSL https://raw.githubusercontent.com/eugene1g/agent-safehouse/main/dist/safehouse.sh -o scripts/safehouse && chmod +x scripts/safehouse
+```
+
+The script lives at `scripts/safehouse`, is listed in `.gitignore`, and is copied into the CLI npm package at build time (`build.mjs` copies it to `cli/scripts/safehouse`).
+
+### CLI Binary Resolution
+
+`resolveCLIPath()` prefers the platform-specific native binary at `node_modules/@github/copilot-<platform>-<arch>/copilot` (e.g., `copilot-darwin-arm64/copilot`). This is a standalone executable that doesn't require Node.js. If the native binary isn't available, it falls back to the JS entry point at `node_modules/@github/copilot/npm-loader.js`.
+
+Using the native binary is critical for safehouse integration: safehouse auto-detects the `copilot` command basename and loads the `copilot-cli.sb` agent profile, which grants access to `~/.copilot` (config/state) and requires the keychain integration profile. With the JS entry point, the command would be `node` or the Electron binary, and the copilot-cli profile would not be auto-detected.
+
+### Integration
+
+`initAgent()` in `copilot-agent.ts` configures the `CopilotClient` to run the CLI through safehouse:
+
+```ts
+new CopilotClient({
+  cliPath: safehousePath,           // scripts/safehouse
+  cliArgs: [
+    '--workdir', cwd,               // read+write access to the workspace
+    '--add-dirs-ro', opts.appRoot,   // read-only access to appRoot (for the CLI binary in node_modules)
+    '--env-pass=COPILOT_SDK_AUTH_TOKEN',  // pass the auth token through the sanitized env
+    cliPath,                        // the native copilot CLI binary to run
+  ],
+  ...
+})
+```
+
+Safehouse wraps the copilot binary: `safehouse --workdir <workspace> --add-dirs-ro <appRoot> --env-pass=COPILOT_SDK_AUTH_TOKEN <copilot-native-binary> [sdk-managed-flags...]`.
+
+Key details:
+
+- **`--workdir`** grants read+write access to the workspace folder so the agent can create and modify files.
+- **`--add-dirs-ro`** grants read-only access to `appRoot` so the sandboxed process can access support files from the app's `node_modules`.
+- **`--env-pass=COPILOT_SDK_AUTH_TOKEN`** passes the authentication token through safehouse's sanitized environment. Without this, the token is stripped by safehouse's `env -i` and the CLI cannot authenticate with the Copilot API.
+- **Agent profile auto-detection**: Safehouse sees the `copilot` command basename and automatically loads the `copilot-cli.sb` agent profile, which grants access to `~/.copilot` for config/state and auto-requires the keychain integration profile.
+- Network access is allowed by default via the core `20-network.sb` profile (no `--enable` flag needed).
+- If `scripts/safehouse` is not found, `initAgent()` throws an error with installation instructions.
+
+### Packaging
+
+The packaged Electron app uses `asar: false` (no archive) so all files remain directly on disk. This avoids issues with executable permissions being lost inside asar archives and eliminates the need for `asar.unpackDir` configuration. The `build.package.mjs` script fixes executable bits on native binaries (`node-pty/spawn-helper`, `copilot-darwin-arm64/copilot`) that `electron-packager` strips during copying.
 
 ## Copilot SDK IPC (Electron)
 

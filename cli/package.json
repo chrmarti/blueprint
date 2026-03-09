@@ -9,7 +9,8 @@
   },
   "files": [
     "implement-cli.mjs",
-    "LICENSE.txt"
+    "LICENSE.txt",
+    "scripts/safehouse"
   ],
   "dependencies": {
     "@github/copilot": "^0.0.403"

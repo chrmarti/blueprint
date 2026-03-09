@@ -86,6 +86,11 @@ fs.copyFileSync('src/index.html', 'dist/index.html');
 // Copy LICENSE to CLI package
 fs.copyFileSync('LICENSE.txt', 'cli/LICENSE.txt');
 
+// Copy safehouse to CLI package
+fs.mkdirSync('cli/scripts', { recursive: true });
+fs.copyFileSync('scripts/safehouse', 'cli/scripts/safehouse');
+fs.chmodSync('cli/scripts/safehouse', 0o755);
+
 // Copy xterm.js CSS
 fs.copyFileSync('node_modules/@xterm/xterm/css/xterm.css', 'dist/xterm.css');
 

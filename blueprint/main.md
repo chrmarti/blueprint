@@ -47,9 +47,12 @@ The long-term goal is **self-hosting**: this tool is itself defined by a markdow
   preload.cjs         ← bundled preload script (CJS)
   implement-cli.mjs     ← bundled CLI implement tool (ESM)
   main.md             ← copied from /blueprint for reference
+/scripts/
+  safehouse           ← agent-safehouse sandbox script (downloaded at npm install)
 package.json          ← project config (see Dependencies below)
 tsconfig.json         ← TypeScript config (target ES2020, bundler resolution)
 build.mjs             ← build script: esbuild bundles + file copy
+build.package.mjs     ← packaging script: electron-packager + chmod fixes
 ```
 
 ## Architecture
@@ -324,7 +327,7 @@ The initial bootstrap version is the TypeScript implementation under `/src`, com
 - The Electron main process and CLI both use the shared `copilot-agent.ts` module for implementation, which wraps the Copilot SDK (`@github/copilot-sdk`) and manages the Copilot CLI (`@github/copilot`) process automatically. The agent writes files directly to the workspace folder. Authentication IPC still uses Node.js `https` directly.
 - The renderer loads `index.html` directly from disk via `loadFile()`.
 - A folder can be passed on the command line: `npm start -- /path/to/folder`.
-- **Runtime dependencies** (must be in `dependencies`, not `devDependencies`): `@github/copilot-sdk`, `@github/copilot`, `@xterm/xterm`, `marked`, `node-pty`. These are required at runtime and must be included in the packaged app. In particular, `@github/copilot` provides the Copilot CLI binary at `node_modules/.bin/copilot` which the SDK spawns as a child process — if it is missing from the packaged app, the agent cannot start.
+- **Runtime dependencies** (must be in `dependencies`, not `devDependencies`): `@github/copilot-sdk`, `@github/copilot`, `@xterm/xterm`, `marked`, `node-pty`. These are required at runtime and must be included in the packaged app. In particular, `@github/copilot` provides the Copilot CLI and its platform-specific native binary (e.g., `@github/copilot-darwin-arm64/copilot`) which the SDK spawns as a child process inside the safehouse sandbox — if it is missing from the packaged app, the agent cannot start.
 - **Build-time dependencies** (in `devDependencies`): `electron`, `esbuild`, `typescript`, `@electron/packager`. These are only needed during development and build, not at runtime.
 
 ### CLI Implement Tool

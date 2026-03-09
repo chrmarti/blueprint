@@ -59,7 +59,15 @@ let _defineTool: typeof import('@github/copilot-sdk').defineTool | null = null;
  * When running as CLI, appRoot is the project root.
  */
 function resolveCLIPath(appRoot: string): string {
-  return path.join(appRoot, 'node_modules', '.bin', 'copilot');
+  // Prefer the platform-specific native binary — it's a standalone executable
+  // that doesn't need Node, and safehouse auto-detects the 'copilot' basename
+  // to load the copilot-cli profile (grants ~/.copilot, keychain access, etc.).
+  const nativeBin = path.join(appRoot, 'node_modules', '@github', `copilot-${process.platform}-${process.arch}`, 'copilot');
+  if (fs.existsSync(nativeBin)) {
+    return nativeBin;
+  }
+  // Fallback to the JS entry point (requires Node to run).
+  return path.join(appRoot, 'node_modules', '@github', 'copilot', 'npm-loader.js');
 }
 
 /**
@@ -81,12 +89,24 @@ export async function initAgent(opts: {
     const { CopilotClient } = sdk;
     _defineTool = sdk.defineTool;
     const cliPath = resolveCLIPath(opts.appRoot);
+    const safehousePath = path.join(opts.appRoot, 'scripts', 'safehouse');
     const cwd = opts.workspaceFolder || process.cwd();
+    if (!fs.existsSync(safehousePath)) {
+      throw new Error(`Safehouse not found at ${safehousePath}. Run: curl -fsSL https://raw.githubusercontent.com/eugene1g/agent-safehouse/main/dist/safehouse.sh -o scripts/safehouse && chmod +x scripts/safehouse`);
+    }
     console.log(`[copilot] Starting CLI from: ${cliPath}`);
     console.log(`[copilot] CLI cwd: ${cwd}`);
+    console.log(`[copilot] Using safehouse: ${safehousePath}`);
 
+    const homeDir = process.env.HOME || '/tmp';
     copilotClient = new CopilotClient({
-      cliPath,
+      cliPath: safehousePath,
+      cliArgs: [
+        '--workdir', cwd,
+        '--add-dirs-ro', opts.appRoot,
+        '--env-pass=COPILOT_SDK_AUTH_TOKEN',
+        cliPath,
+      ],
       cwd,
       githubToken: opts.githubToken,
       useLoggedInUser: false,

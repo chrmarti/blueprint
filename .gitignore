@@ -14,6 +14,10 @@ release/
 cli/implement-cli.mjs
 cli/LICENSE.txt
 
+# Safehouse sandbox
+scripts/safehouse
+cli/scripts/safehouse
+
 # Environment files
 .env
 .env.local

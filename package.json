@@ -6,16 +6,17 @@
   "type": "module",
   "main": "dist/electron.cjs",
   "scripts": {
+    "postinstall": "mkdir -p scripts && curl -fsSL https://raw.githubusercontent.com/eugene1g/agent-safehouse/main/dist/safehouse.sh -o scripts/safehouse && chmod +x scripts/safehouse",
     "build": "node build.mjs",
     "start": "electron .",
     "dev": "npm run build && npm run start",
     "implement": "node dist/implement-cli.mjs",
     "install-cli": "npm run build && cd cli && npm pack && npm install -g blueprint-implementer-cli-0.1.0.tgz && rm blueprint-implementer-cli-0.1.0.tgz",
-    "package": "npm run build && electron-packager . Blueprint --platform=darwin --arch=arm64 --out=release --overwrite --ignore=\"^/(src|test|cli|blueprint|tsconfig|build\\.mjs|playwright)\""
+    "package": "npm run build && node build.package.mjs"
   },
   "devDependencies": {
     "@electron/packager": "^19.0.5",
-    "electron": "^33.0.0",
+    "electron": "^40.8.0",
     "esbuild": "^0.20.0",
     "typescript": "^5.3.0"
   },

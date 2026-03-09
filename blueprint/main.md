@@ -41,6 +41,7 @@ The long-term goal is **self-hosting**: this tool is itself defined by a markdow
   index.html          ← HTML shell with all CSS
 /dist/                ← compiled output (esbuild bundle)
   index.html          ← copied from /src
+  xterm.css           ← copied from node_modules/@xterm/xterm/css/xterm.css
   app.js              ← bundled renderer JS (IIFE)
   electron.cjs        ← bundled Electron main process (CJS)
   preload.cjs         ← bundled preload script (CJS)
@@ -316,7 +317,8 @@ The initial bootstrap version is the TypeScript implementation under `/src`, com
 ### Bootstrap Requirements
 
 - TypeScript source in `/src`, compiled with esbuild to a renderer IIFE bundle (`dist/app.js`), an Electron main process CJS bundle (`dist/electron.cjs`), a preload CJS bundle (`dist/preload.cjs`), and a CLI implement tool ESM bundle (`dist/implement-cli.mjs`).
-- An `index.html` shell in `/src` with all CSS embedded, copied to `/dist` at build time.
+- An `index.html` shell in `/src` with all CSS embedded, copied to `/dist` at build time. All asset references in `index.html` must be local relative paths (no CDN URLs) — the app loads via `file://` and may run offline.
+- `xterm.css` copied from `node_modules/@xterm/xterm/css/xterm.css` to `/dist` at build time. Referenced via `<link rel="stylesheet" href="xterm.css">` in `index.html`. This is **critical** — without it, xterm.js's internal helper textarea elements become visible as raw text fields in the terminal and output panels.
 - `main.md` copied from `/blueprint` to `/dist` for reference.
 - Launched via `npm start` (runs `electron .`) which starts the Electron app.
 - The Electron main process and CLI both use the shared `copilot-agent.ts` module for implementation, which wraps the Copilot SDK (`@github/copilot-sdk`) and manages the Copilot CLI (`@github/copilot`) process automatically. The agent writes files directly to the workspace folder. Authentication IPC still uses Node.js `https` directly.

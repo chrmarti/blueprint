@@ -33,7 +33,7 @@ npm run build        # runs build.mjs → bundles to dist/ and cli/
 npm start            # launches Electron
 npm run dev          # build + start
 npm test             # run tests
-npm run package      # build + package macOS .app to release/
+npm run package      # build + package macOS .app to release/Blueprint-darwin-arm64/Blueprint.app
 npm run install-cli  # build + globally install the CLI
 ```
 

@@ -335,13 +335,13 @@ The initial bootstrap version is the TypeScript implementation under `/src`, com
 A standalone Node.js script (`implement-cli.ts` → `dist/implement-cli.mjs`) that implements markdown blueprints from the command line without launching the Electron app. It uses the same shared `copilot-agent.ts` module as the Electron app.
 
 ```
-npm run implement -- <input.md> [--model <model>]
+blueprint implement <workspace-folder> [--model <model>] [--no-sandbox]
 ```
 
 - Requires `GITHUB_TOKEN` environment variable (GitHub personal access token with Copilot access).
 - Uses the shared `copilot-agent` module — same `initAgent()`, `implementWithAgent()`, and system prompt as the Electron app.
 - The agent writes output files directly to the workspace folder (the directory containing the input markdown file).
 - Logs agent events (tool calls, progress, usage) to stdout with `[implement]` prefix and emoji markers.
-- Default model: `claude-opus-4.5`, default timeout: 600,000ms (10 minutes).
-
-This is sufficient to implement this document into the first real version of the tool.
+- Default model: `claude-opus-4.5`.
+- `--no-sandbox` runs the Copilot CLI directly without the safehouse sandbox. Useful in CI environments where the macOS Seatbelt sandbox may conflict with the runner.
+- On activity timeout (no events for 120 seconds), the CLI automatically retries up to 3 times with a 10-second delay between attempts. Each retry reinitializes the agent with a fresh session. Non-timeout errors fail immediately.

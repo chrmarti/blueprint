@@ -185,86 +185,99 @@ async function commandImplement(args: string[]): Promise<void> {
 
   const appRoot = getAppRoot();
 
-  // Initialize the Copilot agent
-  console.log(`[${ts()}] Initializing agent...`);
-  const initResult = await initAgent({ githubToken, appRoot, workspaceFolder, noSandbox });
-  if (!initResult.ok) {
-    console.error(`[${ts()}] Failed to initialize agent: ${initResult.error}`);
-    process.exit(1);
-  }
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_MS = 10_000;
 
-  // Run the agent with a heartbeat so the user can tell it's alive
-  let lastEventTime = Date.now();
-  let currentTurn: string | null = null;
-  let turnStartTime = 0;
-  const heartbeat = setInterval(async () => {
-    const silentSec = Math.round((Date.now() - lastEventTime) / 1000);
-    if (silentSec >= 10) {
-      const health = await checkHealth().catch(() => null);
-      const healthStr = health ? ` [state=${health.state}${health.pingMs !== undefined ? ` ping=${health.pingMs}ms` : ''}${health.error ? ` err=${health.error}` : ''}]` : ' [no client]';
-      const turnElapsed = currentTurn ? Math.round((Date.now() - turnStartTime) / 1000) : 0;
-      const turnStr = currentTurn ? `Turn ${currentTurn}, ${turnElapsed}s` : `${silentSec}s since last event`;
-      process.stderr.write(`[${ts()}] ⏳ generating... (${turnStr})${healthStr}\n`);
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    // Initialize the Copilot agent
+    console.log(`[${ts()}] Initializing agent...${attempt > 1 ? ` (attempt ${attempt}/${MAX_RETRIES})` : ''}`);
+    const initResult = await initAgent({ githubToken, appRoot, workspaceFolder, noSandbox });
+    if (!initResult.ok) {
+      console.error(`[${ts()}] Failed to initialize agent: ${initResult.error}`);
+      process.exit(1);
     }
-  }, 10_000);
 
-  const result = await implementWithAgent({
-    model,
-    markdown,
-    workspaceFolder,
-    systemPrompt: SYSTEM_PROMPT,
-    onEvent: (event) => {
-      lastEventTime = Date.now();
-      switch (event.type) {
-        case 'chunk':
-          process.stdout.write(event.message || '');
-          break;
-        case 'error':
-          console.error(`[${ts()}] ERROR: ${event.message}`);
-          break;
-        case 'tool_start':
-          console.log(`[${ts()}] 🔧 ${event.message}`);
-          break;
-        case 'tool_complete':
-          console.log(`[${ts()}] ✅ ${event.message}`);
-          break;
-        case 'usage':
-          console.log(`[${ts()}] 📊 ${event.message}`);
-          break;
-        case 'turn_start':
-          currentTurn = event.data?.turnId ?? currentTurn;
-          turnStartTime = Date.now();
-          console.log(`[${ts()}] ${event.message}`);
-          break;
-        case 'turn_end':
-          console.log(`[${ts()}] ${event.message}`);
-          currentTurn = null;
-          break;
-        case 'done':
-          console.log(`[${ts()}] ✨ ${event.message}`);
-          break;
-        case 'files_changed':
-          console.log(`[${ts()}] Files may have changed in: ${event.data?.workspaceFolder}`);
-          break;
-        default:
-          console.log(`[${ts()}] ${event.message || event.type}`);
-          break;
+    // Run the agent with a heartbeat so the user can tell it's alive
+    let lastEventTime = Date.now();
+    let currentTurn: string | null = null;
+    let turnStartTime = 0;
+    const heartbeat = setInterval(async () => {
+      const silentSec = Math.round((Date.now() - lastEventTime) / 1000);
+      if (silentSec >= 10) {
+        const health = await checkHealth().catch(() => null);
+        const healthStr = health ? ` [state=${health.state}${health.pingMs !== undefined ? ` ping=${health.pingMs}ms` : ''}${health.error ? ` err=${health.error}` : ''}]` : ' [no client]';
+        const turnElapsed = currentTurn ? Math.round((Date.now() - turnStartTime) / 1000) : 0;
+        const turnStr = currentTurn ? `Turn ${currentTurn}, ${turnElapsed}s` : `${silentSec}s since last event`;
+        process.stderr.write(`[${ts()}] ⏳ generating... (${turnStr})${healthStr}\n`);
       }
-    },
-  });
+    }, 10_000);
 
-  clearInterval(heartbeat);
+    const result = await implementWithAgent({
+      model,
+      markdown,
+      workspaceFolder,
+      systemPrompt: SYSTEM_PROMPT,
+      onEvent: (event) => {
+        lastEventTime = Date.now();
+        switch (event.type) {
+          case 'chunk':
+            process.stdout.write(event.message || '');
+            break;
+          case 'error':
+            console.error(`[${ts()}] ERROR: ${event.message}`);
+            break;
+          case 'tool_start':
+            console.log(`[${ts()}] 🔧 ${event.message}`);
+            break;
+          case 'tool_complete':
+            console.log(`[${ts()}] ✅ ${event.message}`);
+            break;
+          case 'usage':
+            console.log(`[${ts()}] 📊 ${event.message}`);
+            break;
+          case 'turn_start':
+            currentTurn = event.data?.turnId ?? currentTurn;
+            turnStartTime = Date.now();
+            console.log(`[${ts()}] ${event.message}`);
+            break;
+          case 'turn_end':
+            console.log(`[${ts()}] ${event.message}`);
+            currentTurn = null;
+            break;
+          case 'done':
+            console.log(`[${ts()}] ✨ ${event.message}`);
+            break;
+          case 'files_changed':
+            console.log(`[${ts()}] Files may have changed in: ${event.data?.workspaceFolder}`);
+            break;
+          default:
+            console.log(`[${ts()}] ${event.message || event.type}`);
+            break;
+        }
+      },
+    });
 
-  // Clean up
-  console.log(`[${ts()}] Stopping agent...`);
-  await stopAgent();
+    clearInterval(heartbeat);
 
-  if (!result.ok) {
+    // Clean up
+    console.log(`[${ts()}] Stopping agent...`);
+    await stopAgent();
+
+    if (result.ok) {
+      console.log(`[${ts()}] Done.`);
+      return;
+    }
+
+    const isTimeout = result.error?.includes('Activity timeout');
+    if (isTimeout && attempt < MAX_RETRIES) {
+      console.error(`[${ts()}] Agent timed out. Retrying in ${RETRY_DELAY_MS / 1000}s...`);
+      await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+      continue;
+    }
+
     console.error(`[${ts()}] Implementation failed: ${result.error}`);
     process.exit(1);
   }
-
-  console.log(`[${ts()}] Done.`);
 }
 
 const HELP = `Usage: blueprint <command> [options]

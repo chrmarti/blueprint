@@ -70,7 +70,7 @@ You have a custom tool available: open_in_preview_browser. Call it with a URL (e
 
 The `copilot-agent.ts` module is the shared implementation backend, used by both the Electron main process and the standalone CLI. It wraps the Copilot SDK:
 
-- `initAgent({ githubToken, appRoot })` — Dynamically imports `@github/copilot-sdk` (ESM-only, loaded via `await import()`), resolves the copilot CLI binary (preferring the platform-specific native binary at `@github/copilot-<platform>-<arch>/copilot`), wraps it in the safehouse sandbox (see below), and starts it. Safe to call multiple times (restarts the client).
+- `initAgent({ githubToken, appRoot, noSandbox? })` — Dynamically imports `@github/copilot-sdk` (ESM-only, loaded via `await import()`), resolves the copilot CLI binary (preferring the platform-specific native binary at `@github/copilot-<platform>-<arch>/copilot`). When `noSandbox` is false or omitted, wraps the CLI in the safehouse sandbox (see below). When `noSandbox` is true, runs the CLI directly without sandboxing. Safe to call multiple times (restarts the client).
 - `implementWithAgent({ model, markdown, workspaceFolder, systemPrompt?, onEvent })` — Creates a streaming session with `environment: { cwd: workspaceFolder }` so the agent's file tools operate in the project folder. Attaches a wildcard event listener that emits typed `ImplementEvent`s (`log`, `chunk`, `tool_start`, `tool_complete`, `usage`, `error`, `done`, `files_changed`). Calls `sendAndWait()` with a 600-second timeout. Returns `{ ok, error? }`.
 - `stopAgent()` — Destroys the active session and stops the client.
 

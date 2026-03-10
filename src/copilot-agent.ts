@@ -78,6 +78,7 @@ export async function initAgent(opts: {
   githubToken: string;
   appRoot: string;
   workspaceFolder?: string;
+  noSandbox?: boolean;
 }): Promise<{ ok: boolean; error?: string }> {
   try {
     if (copilotClient) {
@@ -89,24 +90,36 @@ export async function initAgent(opts: {
     const { CopilotClient } = sdk;
     _defineTool = sdk.defineTool;
     const cliPath = resolveCLIPath(opts.appRoot);
-    const safehousePath = path.join(opts.appRoot, 'scripts', 'safehouse');
     const cwd = opts.workspaceFolder || process.cwd();
-    if (!fs.existsSync(safehousePath)) {
-      throw new Error(`Safehouse not found at ${safehousePath}. Run: curl -fsSL https://raw.githubusercontent.com/eugene1g/agent-safehouse/main/dist/safehouse.sh -o scripts/safehouse && chmod +x scripts/safehouse`);
-    }
     console.log(`[copilot] Starting CLI from: ${cliPath}`);
     console.log(`[copilot] CLI cwd: ${cwd}`);
-    console.log(`[copilot] Using safehouse: ${safehousePath}`);
 
-    const homeDir = process.env.HOME || '/tmp';
-    copilotClient = new CopilotClient({
-      cliPath: safehousePath,
-      cliArgs: [
+    let effectiveCliPath: string;
+    let effectiveCliArgs: string[];
+
+    if (opts.noSandbox) {
+      console.log(`[copilot] Sandbox disabled (--no-sandbox)`);
+      effectiveCliPath = cliPath;
+      effectiveCliArgs = [];
+    } else {
+      const safehousePath = path.join(opts.appRoot, 'scripts', 'safehouse');
+      if (!fs.existsSync(safehousePath)) {
+        throw new Error(`Safehouse not found at ${safehousePath}. Run: curl -fsSL https://raw.githubusercontent.com/eugene1g/agent-safehouse/main/dist/safehouse.sh -o scripts/safehouse && chmod +x scripts/safehouse`);
+      }
+      console.log(`[copilot] Using safehouse: ${safehousePath}`);
+      effectiveCliPath = safehousePath;
+      effectiveCliArgs = [
         '--workdir', cwd,
         '--add-dirs-ro', opts.appRoot,
         '--env-pass=COPILOT_SDK_AUTH_TOKEN',
         cliPath,
-      ],
+      ];
+    }
+
+    const homeDir = process.env.HOME || '/tmp';
+    copilotClient = new CopilotClient({
+      cliPath: effectiveCliPath,
+      cliArgs: effectiveCliArgs,
       cwd,
       githubToken: opts.githubToken,
       useLoggedInUser: false,

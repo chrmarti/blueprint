@@ -30,7 +30,7 @@ jobs:
       - name: Implement project
         env:
           GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
-        run: blueprint implement .
+        run: blueprint implement --no-sandbox .
 
       - name: Build project
         run: |

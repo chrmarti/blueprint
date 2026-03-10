@@ -128,10 +128,13 @@ async function commandClean(args: string[]): Promise<void> {
 async function commandImplement(args: string[]): Promise<void> {
   let workspaceArg: string | null = null;
   let model = 'claude-opus-4.5';
+  let noSandbox = false;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--model' && args[i + 1]) {
       model = args[++i];
+    } else if (args[i] === '--no-sandbox') {
+      noSandbox = true;
     } else if (!args[i].startsWith('-')) {
       workspaceArg = args[i];
     }
@@ -184,7 +187,7 @@ async function commandImplement(args: string[]): Promise<void> {
 
   // Initialize the Copilot agent
   console.log(`[${ts()}] Initializing agent...`);
-  const initResult = await initAgent({ githubToken, appRoot, workspaceFolder });
+  const initResult = await initAgent({ githubToken, appRoot, workspaceFolder, noSandbox });
   if (!initResult.ok) {
     console.error(`[${ts()}] Failed to initialize agent: ${initResult.error}`);
     process.exit(1);
@@ -286,6 +289,7 @@ present), then implements them into generated code using the Copilot agent.
 
 Options:
   --model <model>    Model to use (default: claude-opus-4.5)
+  --no-sandbox       Run without the safehouse sandbox
   -h, --help         Show this help`;
 
 const CLEAN_HELP = `Usage: blueprint clean <workspace-folder> [options]

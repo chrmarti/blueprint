@@ -24,7 +24,7 @@ The terminal panel sits below the editor/browser area in the Editor panel, separ
 
 - Default height: 200px, minimum 60px.
 - A horizontal drag handle (`drag-handle-h`) between the editor area and terminal allows vertical resizing.
-- The terminal container fills the panel body and uses a `ResizeObserver` to auto-fit the xterm.js grid (cols/rows) to the available space.
+- The terminal container fills the panel body and uses a `ResizeObserver` to auto-fit the xterm.js grid (cols/rows) to the available space. The fit function calculates cols/rows from the container dimensions and both resizes the xterm.js `Terminal` and calls `terminalResize(cols, rows)` to sync the pty. This fit function is also called immediately after `terminalSpawn()` returns, since the `ResizeObserver` only fires on size changes and won't trigger if the container is already at its final size when the pty spawns.
 
 ### Appearance
 
@@ -35,7 +35,7 @@ The terminal panel sits below the editor/browser area in the Editor panel, separ
 
 ## IPC Handlers
 
-- `terminal:spawn` — Spawns a new shell process (kills any existing one first). Uses the user's default shell (`$SHELL` on Unix, `powershell.exe` on Windows) with the workspace folder as cwd. Sets `TERM=xterm-256color` for full color support. Sends `terminal:data` events to the renderer for output and `terminal:exit` when the process ends.
+- `terminal:spawn` — Spawns a new shell process (kills any existing one first). Uses the user's default shell (`$SHELL` on Unix, `powershell.exe` on Windows) with the workspace folder as cwd. Sets `TERM=xterm-256color` for full color support. The pty starts with default dimensions (80×24). The renderer must call `terminalResize()` immediately after spawn to sync the pty to the actual terminal container size. Sends `terminal:data` events to the renderer for output and `terminal:exit` when the process ends.
 - `terminal:write` — Writes data (user keystrokes) to the pty's stdin.
 - `terminal:resize` — Resizes the pty to match the renderer's cols/rows.
 - `terminal:kill` — Kills the current shell process.

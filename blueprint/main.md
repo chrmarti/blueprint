@@ -73,7 +73,7 @@ The application is an Electron desktop app composed of three primary regions in 
 - **Terminal Emulation**: `node-pty` for pseudo-terminal in the main process, `@xterm/xterm` for rendering in the renderer.
 - **File System**: Electron IPC (`ipcMain.handle` / `ipcRenderer.invoke`) for reading directories, reading files, writing files, and showing native dialogs.
 - **Runtime Sandbox**: An iframe with `srcdoc` and `sandbox="allow-scripts allow-modals"` for rendering and executing implemented output in isolation.
-- **Build Tooling**: esbuild for bundling (renderer IIFE + main CJS + preload CJS), TypeScript for type checking.
+- **Build Tooling**: esbuild for bundling (renderer IIFE + main CJS + preload CJS), TypeScript for type checking. Only `electron` and `node-pty` are externalized in the Electron main process bundle — all other dependencies including `@github/copilot-sdk` are bundled into `electron.cjs`. This avoids ESM resolution issues at runtime (e.g., `vscode-jsonrpc/node` missing `.js` extension) since esbuild resolves all imports at build time. The CLI bundle similarly bundles everything except native modules.
 
 ## Electron Main Process
 
@@ -327,7 +327,7 @@ The initial bootstrap version is the TypeScript implementation under `/src`, com
 - The Electron main process and CLI both use the shared `copilot-agent.ts` module for implementation, which wraps the Copilot SDK (`@github/copilot-sdk`) and manages the Copilot CLI (`@github/copilot`) process automatically. The agent writes files directly to the workspace folder. Authentication IPC still uses Node.js `https` directly.
 - The renderer loads `index.html` directly from disk via `loadFile()`.
 - A folder can be passed on the command line: `npm start -- /path/to/folder`.
-- **Runtime dependencies** (must be in `dependencies`, not `devDependencies`): `@github/copilot-sdk`, `@github/copilot`, `@xterm/xterm`, `marked`, `node-pty`. These are required at runtime and must be included in the packaged app. In particular, `@github/copilot` provides the Copilot CLI and its platform-specific native binary (e.g., `@github/copilot-darwin-arm64/copilot`) which the SDK spawns as a child process inside the safehouse sandbox — if it is missing from the packaged app, the agent cannot start.
+- **Runtime dependencies** (must be in `dependencies`, not `devDependencies`): `@github/copilot-sdk`, `@github/copilot`, `@xterm/xterm`, `marked`, `node-pty`. The SDK is bundled into the Electron main process and CLI at build time, but `@github/copilot` must remain in `node_modules` at runtime because its platform-specific native binary (e.g., `@github/copilot-darwin-arm64/copilot`) is spawned as a child process inside the safehouse sandbox. `node-pty` is externalized because it contains native `.node` addons that must be loaded from disk.
 - **Build-time dependencies** (in `devDependencies`): `electron`, `esbuild`, `typescript`, `@electron/packager`. These are only needed during development and build, not at runtime.
 
 ### CLI Implement Tool

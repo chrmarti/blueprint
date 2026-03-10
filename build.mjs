@@ -31,7 +31,7 @@ await esbuild.build({
   target: 'node22',
   sourcemap: true,
   minify: false,
-  external: ['electron', '@github/copilot-sdk', 'node-pty'],
+  external: ['electron', 'node-pty'],
 });
 
 // Bundle preload script

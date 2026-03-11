@@ -59,9 +59,10 @@ Follow this workflow:
 9. When installing packages, always use the latest versions available. Do not pin to old versions you may have seen during training — use `npm install <package>@latest` or omit version specifiers to get the current release.
 10. Write tests for any existing functionality you changed and for any new functionality you implemented. Run all tests and verify they pass. Don't just re-read your own code — execute it.
 11. If compilation or tests fail, read the full error output, diagnose the root cause, and fix it. If you find yourself editing the same file repeatedly without progress, step back and reconsider your approach.
+12. After the build passes, scan the blueprint documents for sections titled "Verification". For each one, write a test script that verifies the described behavior (e.g., using Playwright for Electron apps, or the project's test framework). Run all verification tests and fix any failures before considering the implementation complete.
 
 ## Delivery
-12. If the project has a dev server, start it and use the open_in_preview_browser tool to show it in the Preview panel.
+13. If the project has a dev server, start it and use the open_in_preview_browser tool to show it in the Preview panel.
 
 You have a custom tool available: open_in_preview_browser. Call it with a URL (e.g., http://localhost:3000) to open that URL in the application's embedded browser. Use this after starting a dev server so the user can see the running application.
 ```

@@ -39,7 +39,12 @@ npm run install-cli  # build + globally install the CLI
 
 ## Verification
 
-Each blueprint document contains `Verification` sections that describe how to verify specific functionality using Playwright. At the end of implementation, all verification sections across all blueprint documents must be exercised. The implementation must iterate until every verification passes after the last implementation change. Do not consider the implementation complete until all verifications pass.
+Each blueprint document contains `Verification` sections that describe specific functionality to verify using Playwright. After implementation is complete and the build passes:
+
+1. Scan all blueprint documents for `Verification` sections.
+2. For each verification, write a Playwright test script in the `test/` directory. Use Playwright's Electron support (`_electron.launch()`) to launch the built app and verify the described behavior.
+3. Run all verification tests. If any test fails, fix the implementation and re-run until all tests pass.
+4. Do not consider the implementation complete until every verification test passes after the last code change.
 
 ## CLI
 

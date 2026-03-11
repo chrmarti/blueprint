@@ -47,6 +47,10 @@ The terminal panel sits below the editor/browser area in the Editor panel, separ
 - When the shell process exits, `[Process exited]` is shown in the terminal output.
 - Theme changes are applied immediately via `updateTerminalTheme()`.
 
+### Verification
+
+Use Playwright to verify the terminal is functional after app launch: wait for the terminal panel's xterm.js instance to render, then confirm that the terminal contains visible text content (e.g., a shell prompt or directory name), not just a blinking cursor on an empty screen.
+
 ## Preload API
 
 The preload script exposes these methods on `window.electronAPI`:

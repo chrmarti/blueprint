@@ -37,6 +37,10 @@ npm run package      # build + package macOS .app to release/Blueprint-darwin-ar
 npm run install-cli  # build + globally install the CLI
 ```
 
+## Verification
+
+Each blueprint document contains `Verification` sections that describe how to verify specific functionality using Playwright. At the end of implementation, all verification sections across all blueprint documents must be exercised. The implementation must iterate until every verification passes after the last implementation change. Do not consider the implementation complete until all verifications pass.
+
 ## CLI
 
 The project produces a standalone CLI (`blueprint`) published as an npm package from `cli/`.

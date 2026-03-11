@@ -150,6 +150,10 @@ See [git.md](git.md) for details.
 - **Clean**: The 🗑 Clean button in the main toolbar removes all files and folders in the workspace root that are not listed in `.blueprintfiles`. Shows a confirmation dialog listing exactly which entries will be deleted. If no `.blueprintfiles` exists, shows an alert prompting the user to create one.
 - **Keyboard**: Cmd+S saves the current file to disk immediately.
 
+#### Verification
+
+Use Playwright to verify the Open Folder button works: click the open-folder toolbar button, handle the native folder dialog by selecting a test folder, and verify that the folder name appears in the toolbar and that `blueprint.md` appears in the file tree.
+
 ## Blueprint Files
 
 A `.blueprintfiles` file in the workspace root declares which files and folders are part of the blueprint and should be preserved during a Clean operation. Format:
@@ -239,6 +243,10 @@ The Browser tab in the Editor panel provides an embedded web browser for preview
 - An **address bar** at the top for navigating to URLs. Typing a URL and pressing Enter loads it in the iframe. If no protocol is specified, `http://` is prepended automatically.
 - The address bar can be set programmatically by the `open_in_preview_browser` agent tool, which also switches to the Browser tab.
 - Console forwarding script injected into `<head>` for `srcdoc` content: intercepts `console.log`, `console.warn`, `console.error` and forwards via `parent.postMessage`.
+
+#### Verification
+
+Use Playwright to verify the browser iframe is only visible on the Browser tab: switch to the Edit tab and confirm the iframe and address bar are not visible, then switch to the Browser tab and confirm they are visible.
 
 ## Layout and Interaction
 

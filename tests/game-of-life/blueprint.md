@@ -66,7 +66,7 @@ At each step, the following rules apply:
 
 ## Presets
 
-The following classic patterns should be available from a dropdown in the control bar.
+The following classic patterns should be available from a list in a sidebar on the right.
 Each preset clears the grid, places the pattern in the center, and resets the generation counter.
 
 ### Still Lifes

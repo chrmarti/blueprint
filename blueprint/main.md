@@ -220,6 +220,10 @@ The output panel orchestrates transformation of the authored markdown into runna
 - A **save** button (💾) to write implemented output to a file on disk via a native save dialog.
 - Implementation output is stored in `localStorage` for session persistence.
 
+#### Verification
+
+Write a test using Playwright that starts the app on a folder with a Game of Life blueprint and triggers the Implement button. The test must observe that the Output panel starts streaming messages from the Copilot CLI/SDK.
+
 ### Copilot SDK Integration
 
 - Authentication via GitHub OAuth device flow (no API keys needed).

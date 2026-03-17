@@ -5,7 +5,7 @@
 
 # Authentication
 
-The application uses the GitHub OAuth device flow to authenticate users and access their Copilot subscription.
+The application uses the GitHub OAuth device flow to authenticate users and access their Copilot subscription. For CI GITHUB_TOKEN may be set in which case the app will assume being signed in by that token.
 
 ## Device Flow
 

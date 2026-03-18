@@ -17,7 +17,7 @@ The application uses the GitHub OAuth device flow to authenticate users and acce
 
 ### Verification
 
-- The sign button in the toolbar can be clicked.
+- Write a Playwright test checking that the sign in button in the toolbar can be clicked and that it triggers the sign in flow.
 
 ## Copilot Token
 

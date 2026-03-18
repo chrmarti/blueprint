@@ -16,6 +16,8 @@ The terminal uses `node-pty` in the Electron main process to spawn a real pseudo
 
 `node-pty` is a native module and must be rebuilt for Electron's Node.js version using `electron-rebuild`. It is marked as `external` in the esbuild config so it is loaded from `node_modules` at runtime.
 
+> **Known issue:** `node-pty` v1.1.0 ships its macOS `spawn-helper` prebuild without the execute bit, causing `posix_spawnp failed` errors (see [microsoft/node-pty#850](https://github.com/microsoft/node-pty/issues/850)). Add a `postinstall` script in `package.json` to work around this by running `chmod +x` on the prebuilt binary. This workaround can be removed once `node-pty` ≥1.2.0 stable is released with the fix.
+
 ## UI
 
 The terminal panel sits below the editor/browser area in the Editor panel, separated by a horizontal drag handle for resizing.

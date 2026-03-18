@@ -229,7 +229,7 @@ Write a test using Playwright that starts the app on a folder with a Game of Lif
 - Authentication via GitHub OAuth device flow (no API keys needed).
 - Users sign in with their GitHub account; the GitHub token is passed to the shared `copilot-agent` module which handles Copilot authentication internally.
 - Implementation uses the shared `copilot-agent.ts` module which wraps `@github/copilot-sdk`: it creates a `CopilotClient`, starts the Copilot CLI (`@github/copilot`), creates a streaming session with `environment: { cwd: workspaceFolder }`, and relays events to the renderer. The agent uses its built-in file tools to write output files directly to the workspace.
-- Model selection dropdown, dynamically populated from the Copilot API's available models list (default: `claude-opus-4.5`).
+- Model selection dropdown, dynamically populated from the Copilot API's available models list (default: `claude-opus-4.5`). When the model list is not yet available (e.g., user not signed in, or network issues), the dropdown should indicate this state to the user rather than appearing empty.
 - Max token limit is auto-filled from the selected model's `capabilities.limits.max_output_tokens` metadata.
 - Temperature slider (default: 0) for controlling output determinism.
 

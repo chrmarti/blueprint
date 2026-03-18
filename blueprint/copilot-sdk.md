@@ -78,17 +78,17 @@ client.createSession({
 
 ## Event System
 
-Events arrive via `session.on(callback)`. Key events and their timing:
+Events arrive via `session.on(callback)`. Each event is a discriminated union (`SessionEvent` type exported by the SDK) with `type` and `data` fields — all payload properties live under `event.data`, not directly on the event object.
 
-| Event | When | Notes |
+| Event | When | `event.data` fields |
 |---|---|---|
-| `session.start` | Session created | Contains `selectedModel`, `copilotVersion` |
-| `assistant.turn_start` | Each turn begins | Contains `turnId` |
-| `assistant.message_delta` | Streaming text chunks | Only for conversational text, **not** tool call arguments |
-| `assistant.usage` | After each LLM API call | `inputTokens`, `outputTokens`, `duration` |
+| `session.start` | Session created | `selectedModel`, `copilotVersion` |
+| `assistant.turn_start` | Each turn begins | `turnId` |
+| `assistant.message_delta` | Streaming text chunks | `deltaContent` (not tool call arguments) |
+| `assistant.usage` | After each LLM API call | `inputTokens`, `outputTokens`, `duration`, `model` |
 | `tool.execution_start` | Tool begins executing | `toolName`, `arguments` |
 | `tool.execution_complete` | Tool finishes | `success`, `result` |
-| `assistant.turn_end` | Turn completes | |
+| `assistant.turn_end` | Turn completes | `turnId` |
 | `session.idle` | All turns done | Use this as the "finished" signal |
 | `session.error` | Something broke | `errorType`, `message`, `statusCode` |
 
@@ -110,6 +110,10 @@ Useful for heartbeat monitoring during long silent periods. The connection stays
 ## Custom Tools (`defineTool`)
 
 The SDK supports `defineTool()` with Zod schemas for parameter validation. We don't use this — we rely entirely on the CLI's built-in tools (filesystem, shell, etc.). Reference implementations (like `hoodini/copilot-sdk-terminal-agent`) use custom tools for specific functionality.
+
+## Types
+
+Use the types exported by the SDK package (`SessionEvent`, `CopilotClient`, `CopilotSession`, etc.) rather than inventing ad-hoc type annotations. The `SessionEvent` type is a discriminated union — TypeScript narrows the `data` field automatically when you switch on `event.type`.
 
 ## ESM-Only
 

@@ -75,7 +75,7 @@ The `copilot-agent.ts` module is the shared implementation backend, used by both
 - `implementWithAgent({ model, markdown, workspaceFolder, systemPrompt?, onEvent })` — Creates a streaming session with `environment: { cwd: workspaceFolder }` so the agent's file tools operate in the project folder. Attaches a wildcard event listener that emits typed `ImplementEvent`s (`log`, `chunk`, `tool_start`, `tool_complete`, `usage`, `error`, `done`, `files_changed`). Calls `sendAndWait()` with a 600-second timeout. Returns `{ ok, error? }`.
 - `stopAgent()` — Destroys the active session and stops the client.
 
-The module uses `import type` for compile-time SDK types and `await import('@github/copilot-sdk')` at runtime, since the SDK is ESM-only and the Electron main process is bundled as CJS.
+The module uses `import type` for compile-time SDK types (e.g., `import type { CopilotClient, CopilotClientOptions, CopilotSession, SessionEvent } from '@github/copilot-sdk'`) and `await import('@github/copilot-sdk')` at runtime, since the SDK is ESM-only and the Electron main process is bundled as CJS. Always use the SDK's exported types rather than ad-hoc type annotations — use `CopilotClientOptions` for client construction, `SessionEvent` for event listener callbacks, `SessionConfig` for session creation, etc.
 
 ## Sandbox (Safehouse)
 
@@ -103,9 +103,10 @@ Using the native binary is critical for safehouse integration: safehouse auto-de
 
 ```ts
 new CopilotClient({
+  cwd: workspaceFolder,
   cliPath: safehousePath,           // scripts/safehouse
   cliArgs: [
-    '--workdir', cwd,               // read+write access to the workspace
+    '--workdir', workspaceFolder,               // read+write access to the workspace
     '--add-dirs-ro', opts.appRoot,   // read-only access to appRoot (for the CLI binary in node_modules)
     '--env-pass=COPILOT_SDK_AUTH_TOKEN',  // pass the auth token through the sanitized env
     cliPath,                        // the native copilot CLI binary to run

@@ -90,6 +90,7 @@ fs.copyFileSync('LICENSE.txt', 'cli/LICENSE.txt');
 fs.mkdirSync('cli/scripts', { recursive: true });
 fs.copyFileSync('scripts/safehouse', 'cli/scripts/safehouse');
 fs.chmodSync('cli/scripts/safehouse', 0o755);
+fs.copyFileSync('scripts/electron-mach-fix.sb', 'cli/scripts/electron-mach-fix.sb');
 
 // Copy xterm.js CSS
 fs.copyFileSync('node_modules/@xterm/xterm/css/xterm.css', 'dist/xterm.css');

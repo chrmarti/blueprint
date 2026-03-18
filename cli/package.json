@@ -10,7 +10,8 @@
   "files": [
     "implement-cli.mjs",
     "LICENSE.txt",
-    "scripts/safehouse"
+    "scripts/safehouse",
+    "scripts/electron-mach-fix.sb"
   ],
   "dependencies": {
     "@github/copilot": "^0.0.403"

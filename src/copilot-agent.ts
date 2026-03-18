@@ -114,7 +114,8 @@ export async function initAgent(opts: {
         '--workdir', cwd,
         '--add-dirs-ro', opts.appRoot,
         '--enable=electron',
-        '--add-dirs', path.join(os.homedir(), 'Library', 'Caches', 'electron'),
+        '--add-dirs', path.join(os.homedir(), 'Library', 'Caches', 'electron') + ':' + path.join(os.homedir(), 'Library', 'Application Support', 'blueprint-implementer'),
+        '--append-profile', path.join(opts.appRoot, 'scripts', 'electron-mach-fix.sb'),
         '--env-pass=COPILOT_SDK_AUTH_TOKEN',
         cliPath,
       ];

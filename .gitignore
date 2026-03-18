@@ -11,12 +11,11 @@ out/
 release/
 
 # CLI build output
-cli/implement-cli.mjs
-cli/LICENSE.txt
+cli/*
+!cli/package.json
 
 # Safehouse sandbox
 scripts/safehouse
-cli/scripts/safehouse
 
 # Environment files
 .env

@@ -340,7 +340,7 @@ The initial bootstrap version is the TypeScript implementation under `/src`, com
 - The renderer loads `index.html` directly from disk via `loadFile()`.
 - A folder can be passed on the command line: `npm start -- /path/to/folder`.
 - **Runtime dependencies** (must be in `dependencies`, not `devDependencies`): `@github/copilot-sdk`, `@github/copilot`, `@xterm/xterm`, `marked`, `node-pty`. The SDK is bundled into the Electron main process and CLI at build time, but `@github/copilot` must remain in `node_modules` at runtime because its platform-specific native binary (e.g., `@github/copilot-darwin-arm64/copilot`) is spawned as a child process inside the safehouse sandbox. `node-pty` is externalized because it contains native `.node` addons that must be loaded from disk.
-- **Build-time dependencies** (in `devDependencies`): `electron`, `esbuild`, `typescript`, `@electron/packager`. These are only needed during development and build, not at runtime.
+- **Build-time dependencies** (in `devDependencies`): `electron`, `esbuild`, `typescript`, `@electron/packager`. These are only needed during development and build, not at runtime. Always use the latest `electron` version — older versions crash on recent macOS releases (e.g., versions below 36.9.2 segfault on macOS 26 Tahoe due to a Chromium GPU process bug).
 
 ### CLI Implement Tool
 

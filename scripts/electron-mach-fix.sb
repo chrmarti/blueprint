@@ -1,0 +1,8 @@
+;; Allow Electron's MachPortRendezvousServer registration and lookup
+;; Required for Chromium's child process communication under sandbox-exec
+(allow mach-register
+    (global-name-regex #"^com\.github\.Electron\.MachPortRendezvousServer\.")
+)
+(allow mach-lookup
+    (global-name-regex #"^com\.github\.Electron\.MachPortRendezvousServer\.")
+)

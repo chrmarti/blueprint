@@ -109,7 +109,8 @@ new CopilotClient({
     '--workdir', workspaceFolder,               // read+write access to the workspace
     '--add-dirs-ro', opts.appRoot,   // read-only access to appRoot (for the CLI binary in node_modules)
     '--enable=electron',            // enable Electron/Chromium sandbox profile (GPU, Metal, crashpad, window server)
-    '--add-dirs', path.join(os.homedir(), 'Library', 'Caches', 'electron'),  // read+write access to the Electron download cache
+    '--add-dirs', electronCachePath + ':' + appSupportPath,  // Electron download cache + app data (Code Cache, GPU cache)
+    '--append-profile', electronMachFixPath,     // allow Electron's MachPortRendezvousServer Mach IPC
     '--env-pass=COPILOT_SDK_AUTH_TOKEN',  // pass the auth token through the sanitized env
     cliPath,                        // the native copilot CLI binary to run
   ],
@@ -117,18 +118,40 @@ new CopilotClient({
 })
 ```
 
-Safehouse wraps the copilot binary: `safehouse --workdir <workspace> --add-dirs-ro <appRoot> --enable=electron --add-dirs ~/Library/Caches/electron --env-pass=COPILOT_SDK_AUTH_TOKEN <copilot-native-binary> [sdk-managed-flags...]`.
+Where `electronCachePath` is `path.join(os.homedir(), 'Library', 'Caches', 'electron')`, `appSupportPath` is `path.join(os.homedir(), 'Library', 'Application Support', 'blueprint-implementer')`, and `electronMachFixPath` is the path to `scripts/electron-mach-fix.sb`.
+
+Safehouse wraps the copilot binary: `safehouse --workdir <workspace> --add-dirs-ro <appRoot> --enable=electron --add-dirs ~/Library/Caches/electron:~/Library/Application\ Support/blueprint-implementer --append-profile scripts/electron-mach-fix.sb --env-pass=COPILOT_SDK_AUTH_TOKEN <copilot-native-binary> [sdk-managed-flags...]`.
+
+The agent also passes `--no-sandbox` to the Electron binary it launches (not to safehouse). This disables Chromium's internal Seatbelt sandbox, which cannot initialize inside safehouse's outer sandbox (macOS blocks nested `sandbox_init` calls with `EPERM`). Safehouse's outer sandbox still enforces all policy rules on the entire process tree.
 
 Key details:
 
 - **`--workdir`** grants read+write access to the workspace folder so the agent can create and modify files.
 - **`--add-dirs-ro`** grants read-only access to `appRoot` so the sandboxed process can access support files from the app's `node_modules`.
 - **`--enable=electron`** enables the `electron.sb` optional integration profile, which grants Chromium/Electron runtime permissions: GPU/Metal shader compilation (`com.apple.MTLCompilerService`), crashpad Mach IPC, and IOKit GPU user clients. This transitively enables `macos-gui.sb` (window server, AppKit, fonts, accessibility) and `clipboard.sb`. Without this, the Electron binary segfaults because it cannot initialize its GPU process or connect to the window server.
-- **`--add-dirs`** grants read+write access to `~/Library/Caches/electron`, where the `electron` npm package downloads and caches its platform-specific binary. Without this, `npm install` fails when the Electron postinstall script tries to write to the cache directory.
+- **`--add-dirs`** grants read+write access to colon-separated paths: `~/Library/Caches/electron` (where the `electron` npm package downloads and caches its platform-specific binary) and `~/Library/Application Support/blueprint-implementer` (where Electron writes disk caches — Code Cache, GPU cache, network state). Without the first, `npm install` fails when the Electron postinstall script tries to write to the cache. Without the second, Electron logs `Database IO error` and cache-creation failures.
+- **`--append-profile scripts/electron-mach-fix.sb`** appends a supplementary sandbox profile that allows `mach-register` and `mach-lookup` for Electron's `com.github.Electron.MachPortRendezvousServer.<pid>` service. Chromium's multi-process architecture uses this Mach port for parent–child process communication. The upstream `electron.sb` profile does not cover this service, so without this fix, child processes (GPU, Renderer, Utility) crash with `bootstrap_check_in: Permission denied`.
 - **`--env-pass=COPILOT_SDK_AUTH_TOKEN`** passes the authentication token through safehouse's sanitized environment. Without this, the token is stripped by safehouse's `env -i` and the CLI cannot authenticate with the Copilot API.
 - **Agent profile auto-detection**: Safehouse sees the `copilot` command basename and automatically loads the `copilot-cli.sb` agent profile, which grants access to `~/.copilot` for config/state and auto-requires the keychain integration profile.
 - Network access is allowed by default via the core `20-network.sb` profile (no `--enable` flag needed).
 - If `scripts/safehouse` is not found, `initAgent()` throws an error with installation instructions.
+
+### The `electron-mach-fix.sb` Profile
+
+The file `scripts/electron-mach-fix.sb` is a small supplementary sandbox profile checked into the repo:
+
+```scheme
+;; Allow Electron's MachPortRendezvousServer registration and lookup
+;; Required for Chromium's child process communication under sandbox-exec
+(allow mach-register
+    (global-name-regex #"^com\.github\.Electron\.MachPortRendezvousServer\.")
+)
+(allow mach-lookup
+    (global-name-regex #"^com\.github\.Electron\.MachPortRendezvousServer\.")
+)
+```
+
+This is needed because the upstream `electron.sb` profile only covers `org.chromium.crashpad.*` Mach services, not Electron's own rendezvous server. The profile is passed to safehouse via `--append-profile` and is also copied into the CLI npm package at build time alongside the main safehouse script.
 
 ### Packaging
 

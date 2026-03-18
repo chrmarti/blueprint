@@ -71,8 +71,8 @@ You have a custom tool available: open_in_preview_browser. Call it with a URL (e
 
 The `copilot-agent.ts` module is the shared implementation backend, used by both the Electron main process and the standalone CLI. It wraps the Copilot SDK:
 
-- `initAgent({ githubToken, appRoot, noSandbox? })` — Dynamically imports `@github/copilot-sdk` (ESM-only, loaded via `await import()`), resolves the copilot CLI binary (preferring the platform-specific native binary at `@github/copilot-<platform>-<arch>/copilot`). When `noSandbox` is false or omitted, wraps the CLI in the safehouse sandbox (see below). When `noSandbox` is true, runs the CLI directly without sandboxing. Safe to call multiple times (restarts the client).
-- `implementWithAgent({ model, markdown, workspaceFolder, systemPrompt?, onEvent })` — Creates a streaming session with `environment: { cwd: workspaceFolder }` so the agent's file tools operate in the project folder. Attaches a wildcard event listener that emits typed `ImplementEvent`s (`log`, `chunk`, `tool_start`, `tool_complete`, `usage`, `error`, `done`, `files_changed`). Calls `sendAndWait()` with a 600-second timeout. Returns `{ ok, error? }`.
+- `initAgent({ githubToken, appRoot, noSandbox? })` — Stores the init options and stops any existing client. Does **not** create the `CopilotClient` yet — client creation is deferred to `implementWithAgent()`, where the workspace folder is known and can be used for safehouse `--workdir`. Safe to call multiple times.
+- `implementWithAgent({ model, markdown, workspaceFolder, systemPrompt?, onEvent })` — Creates (or reuses) the `CopilotClient` for the given workspace folder. If the workspace folder differs from the previous run, the client is recreated so that safehouse `--workdir` and `cwd` point at the correct directory. Then creates a streaming session with `workingDirectory: workspaceFolder` so the agent's file tools operate in the project folder. Attaches a wildcard event listener that emits typed `ImplementEvent`s (`log`, `chunk`, `tool_start`, `tool_complete`, `usage`, `error`, `done`, `files_changed`). Calls `sendAndWait()` with a 600-second timeout. Returns `{ ok, error? }`.
 - `stopAgent()` — Destroys the active session and stops the client.
 
 The module uses `import type` for compile-time SDK types (e.g., `import type { CopilotClient, CopilotClientOptions, CopilotSession, SessionEvent } from '@github/copilot-sdk'`) and `await import('@github/copilot-sdk')` at runtime, since the SDK is ESM-only and the Electron main process is bundled as CJS. Always use the SDK's exported types rather than ad-hoc type annotations — use `CopilotClientOptions` for client construction, `SessionEvent` for event listener callbacks, `SessionConfig` for session creation, etc.
@@ -99,7 +99,7 @@ Using the native binary is critical for safehouse integration: safehouse auto-de
 
 ### Integration
 
-`initAgent()` in `copilot-agent.ts` configures the `CopilotClient` to run the CLI through safehouse:
+`implementWithAgent()` in `copilot-agent.ts` creates the `CopilotClient` on first use (or recreates it when the workspace folder changes) and configures it to run the CLI through safehouse:
 
 ```ts
 new CopilotClient({

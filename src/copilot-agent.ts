@@ -9,6 +9,7 @@
 
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 
 // We import types only at compile time; the SDK is loaded dynamically at runtime (ESM-only).
 import type { CopilotClient as CopilotClientType, Tool } from '@github/copilot-sdk';
@@ -112,6 +113,8 @@ export async function initAgent(opts: {
       effectiveCliArgs = [
         '--workdir', cwd,
         '--add-dirs-ro', opts.appRoot,
+        '--enable=electron',
+        '--add-dirs', path.join(os.homedir(), 'Library', 'Caches', 'electron'),
         '--env-pass=COPILOT_SDK_AUTH_TOKEN',
         cliPath,
       ];

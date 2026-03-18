@@ -108,6 +108,8 @@ new CopilotClient({
   cliArgs: [
     '--workdir', workspaceFolder,               // read+write access to the workspace
     '--add-dirs-ro', opts.appRoot,   // read-only access to appRoot (for the CLI binary in node_modules)
+    '--enable=electron',            // enable Electron/Chromium sandbox profile (GPU, Metal, crashpad, window server)
+    '--add-dirs', path.join(os.homedir(), 'Library', 'Caches', 'electron'),  // read+write access to the Electron download cache
     '--env-pass=COPILOT_SDK_AUTH_TOKEN',  // pass the auth token through the sanitized env
     cliPath,                        // the native copilot CLI binary to run
   ],
@@ -115,12 +117,14 @@ new CopilotClient({
 })
 ```
 
-Safehouse wraps the copilot binary: `safehouse --workdir <workspace> --add-dirs-ro <appRoot> --env-pass=COPILOT_SDK_AUTH_TOKEN <copilot-native-binary> [sdk-managed-flags...]`.
+Safehouse wraps the copilot binary: `safehouse --workdir <workspace> --add-dirs-ro <appRoot> --enable=electron --add-dirs ~/Library/Caches/electron --env-pass=COPILOT_SDK_AUTH_TOKEN <copilot-native-binary> [sdk-managed-flags...]`.
 
 Key details:
 
 - **`--workdir`** grants read+write access to the workspace folder so the agent can create and modify files.
 - **`--add-dirs-ro`** grants read-only access to `appRoot` so the sandboxed process can access support files from the app's `node_modules`.
+- **`--enable=electron`** enables the `electron.sb` optional integration profile, which grants Chromium/Electron runtime permissions: GPU/Metal shader compilation (`com.apple.MTLCompilerService`), crashpad Mach IPC, and IOKit GPU user clients. This transitively enables `macos-gui.sb` (window server, AppKit, fonts, accessibility) and `clipboard.sb`. Without this, the Electron binary segfaults because it cannot initialize its GPU process or connect to the window server.
+- **`--add-dirs`** grants read+write access to `~/Library/Caches/electron`, where the `electron` npm package downloads and caches its platform-specific binary. Without this, `npm install` fails when the Electron postinstall script tries to write to the cache directory.
 - **`--env-pass=COPILOT_SDK_AUTH_TOKEN`** passes the authentication token through safehouse's sanitized environment. Without this, the token is stripped by safehouse's `env -i` and the CLI cannot authenticate with the Copilot API.
 - **Agent profile auto-detection**: Safehouse sees the `copilot` command basename and automatically loads the `copilot-cli.sb` agent profile, which grants access to `~/.copilot` for config/state and auto-requires the keychain integration profile.
 - Network access is allowed by default via the core `20-network.sb` profile (no `--enable` flag needed).

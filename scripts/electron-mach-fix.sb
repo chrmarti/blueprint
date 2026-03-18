@@ -6,3 +6,10 @@
 (allow mach-lookup
     (global-name-regex #"^com\.github\.Electron\.MachPortRendezvousServer\.")
 )
+
+;; Allow access to user fonts and font database cache
+;; Without this, Chromium renders all text as replacement characters (tofu)
+(allow file-read*
+    (home-subpath "/Library/Fonts")
+    (home-subpath "/Library/FontCollections")
+)

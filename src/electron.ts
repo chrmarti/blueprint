@@ -1,391 +1,141 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
+// electron.ts - Electron main process for Blueprint Implementer
+import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron';
+import * as path from 'path';
+import * as fs from 'fs';
+import * as https from 'https';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 
-import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
-import * as path from 'node:path';
-import * as fs from 'node:fs';
-import { execFile } from 'node:child_process';
-import https from 'node:https';
-import { initAgent, implementWithAgent, stopAgent, SYSTEM_PROMPT } from './copilot-agent';
-import { cleanWorkspace } from './clean';
-import * as pty from 'node-pty';
+const execFileAsync = promisify(execFile);
+
+// Import types only at compile time (SDK is ESM-only)
+import type { CopilotClient, CopilotSession } from '@github/copilot-sdk';
 
 let mainWindow: BrowserWindow | null = null;
 let workspaceFolder: string | null = null;
-let lastGithubToken: string | null = null;
-let shellProcess: pty.IPty | null = null;
+let pty: import('node-pty').IPty | null = null;
 
-/**
- * Resolve a GitHub token from GITHUB_TOKEN env var or `gh auth token`.
- */
-function resolveGitHubToken(): Promise<string | null> {
+// Copilot agent state
+let copilotClient: CopilotClient | null = null;
+let copilotSession: CopilotSession | null = null;
+let agentInitOptions: { githubToken: string; appRoot: string; noSandbox?: boolean } | null = null;
+let lastWorkspaceFolder: string | null = null;
+
+// --- Token Resolution ---
+async function resolveGitHubToken(): Promise<string | null> {
+  // Check environment variable first
   if (process.env.GITHUB_TOKEN) {
-    return Promise.resolve(process.env.GITHUB_TOKEN);
+    return process.env.GITHUB_TOKEN;
   }
-  return new Promise((resolve) => {
-    execFile('gh', ['auth', 'token'], { timeout: 5000 }, (err, stdout) => {
-      if (err || !stdout.trim()) {
-        resolve(null);
-      } else {
-        resolve(stdout.trim());
-      }
-    });
-  });
-}
 
-// ── Persist last workspace folder ───────────────────────────────────
-
-function getStatePath(): string {
-  return path.join(app.getPath('userData'), 'state.json');
-}
-
-function saveLastFolder(): void {
-  if (!workspaceFolder) return;
+  // Try gh auth token
   try {
-    fs.writeFileSync(getStatePath(), JSON.stringify({ lastFolder: workspaceFolder }), 'utf-8');
-  } catch {}
-}
+    const { stdout } = await execFileAsync('gh', ['auth', 'token']);
+    const token = stdout.trim();
+    if (token) return token;
+  } catch {
+    // gh CLI not available or not logged in
+  }
 
-function loadLastFolder(): string | null {
-  try {
-    const data = JSON.parse(fs.readFileSync(getStatePath(), 'utf-8'));
-    if (data.lastFolder && fs.existsSync(data.lastFolder) && fs.statSync(data.lastFolder).isDirectory()) {
-      return data.lastFolder;
-    }
-  } catch {}
   return null;
 }
 
-// ── HTTPS request helper ────────────────────────────────────────────
-
-function httpsRequest(
-  method: string,
-  targetUrl: string,
-  headers: Record<string, string>,
-  body: string | null,
-): Promise<{ status: number; body: string }> {
+// --- HTTP Helpers ---
+function httpRequest(url: string, options: https.RequestOptions, body?: string): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const parsed = new URL(targetUrl);
-    const reqHeaders: Record<string, string> = { ...headers };
-    if (body) reqHeaders['Content-Length'] = Buffer.byteLength(body).toString();
-
-    const req = https.request(
-      {
-        hostname: parsed.hostname,
-        port: 443,
-        path: parsed.pathname + parsed.search,
-        method,
-        headers: reqHeaders,
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c: Buffer) => chunks.push(c));
-        res.on('end', () => {
-          resolve({
-            status: res.statusCode || 200,
-            body: Buffer.concat(chunks).toString(),
-          });
-        });
-      },
-    );
+    const req = https.request(url, options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => (data += chunk));
+      res.on('end', () => resolve({ status: res.statusCode || 0, body: data }));
+    });
     req.on('error', reject);
     if (body) req.write(body);
     req.end();
   });
 }
 
-const COPILOT_HEADERS = {
-  'Editor-Version': 'Blueprint-Implementer/0.1.0',
-  'Editor-Plugin-Version': 'blueprint-implementer/0.1.0',
-  'User-Agent': 'Blueprint-Implementer/0.1.0',
-  'Openai-Organization': 'github-copilot',
-  'Copilot-Integration-Id': 'vscode-chat',
-};
+// --- Copilot CLI Path Resolution ---
+function resolveCLIPath(): string {
+  const appRoot = app.getAppPath();
+  const platform = process.platform;
+  const arch = process.arch;
 
-// ── IPC handlers ────────────────────────────────────────────────────
+  // Try native binary first
+  const platformMap: Record<string, string> = {
+    darwin: 'darwin',
+    linux: 'linux',
+    win32: 'win32',
+  };
+  const archMap: Record<string, string> = {
+    arm64: 'arm64',
+    x64: 'x64',
+  };
 
-function setupIPC(): void {
-  // ── File system ─────────────────────────────────────────────────
+  const platformName = platformMap[platform];
+  const archName = archMap[arch];
 
-  ipcMain.handle('dialog:openFolder', async () => {
-    const result = await dialog.showOpenDialog(mainWindow!, {
-      properties: ['openDirectory'],
-      title: 'Open Folder',
-    });
-    if (result.canceled || result.filePaths.length === 0) return null;
-    workspaceFolder = result.filePaths[0];
-    saveLastFolder();
-    mainWindow?.setTitle(`Blueprint Implementer — ${path.basename(workspaceFolder)}`);
-    // Reinitialize agent with new workspace folder so its cwd is correct
-    resolveGitHubToken().then(token => {
-      if (token) {
-        lastGithubToken = token;
-        initAgent({
-          githubToken: token,
-          appRoot: app.getAppPath(),
-          workspaceFolder: workspaceFolder!,
-        }).catch(err => console.error('[copilot] Reinit on folder change failed:', err));
-      }
-    });
-    return workspaceFolder;
-  });
-
-  ipcMain.handle('workspace:getFolder', () => workspaceFolder);
-
-  ipcMain.handle('fs:readDir', async (_event, dirPath: string) => {
-    try {
-      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-      return entries
-        .filter(e => !e.name.startsWith('.'))
-        .map(e => ({ name: e.name, isDirectory: e.isDirectory() }))
-        .sort((a, b) => {
-          if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-          return a.name.localeCompare(b.name);
-        });
-    } catch {
-      return [];
+  if (platformName && archName) {
+    const nativePath = path.join(appRoot, 'node_modules', '@github', `copilot-${platformName}-${archName}`, 'copilot');
+    if (fs.existsSync(nativePath)) {
+      return nativePath;
     }
-  });
+  }
 
-  ipcMain.handle('fs:readFile', async (_event, filePath: string) => {
-    return fs.readFileSync(filePath, 'utf-8');
-  });
+  // Fallback to JS entry point
+  const jsPath = path.join(appRoot, 'node_modules', '@github', 'copilot', 'npm-loader.js');
+  if (fs.existsSync(jsPath)) {
+    return jsPath;
+  }
 
-  ipcMain.handle('fs:writeFile', async (_event, filePath: string, content: string) => {
-    const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(filePath, content, 'utf-8');
-  });
-
-  ipcMain.handle('fs:delete', async (_event, targetPath: string) => {
-    const stat = fs.statSync(targetPath);
-    if (stat.isDirectory()) {
-      fs.rmSync(targetPath, { recursive: true, force: true });
-    } else {
-      fs.unlinkSync(targetPath);
-    }
-  });
-
-  ipcMain.handle('fs:cleanWorkspace', async (_event, opts?: { dryRun?: boolean }) => {
-    if (!workspaceFolder) return { ok: false, error: 'No workspace folder open' };
-
-    // Disable asar handling so .asar files inside node_modules etc. are
-    // deleted as plain files rather than being treated as directories.
-    const prevAsar = process.noAsar;
-    process.noAsar = true;
-    try {
-      return cleanWorkspace(workspaceFolder, opts);
-    } finally {
-      process.noAsar = prevAsar;
-    }
-  });
-
-  ipcMain.handle('dialog:saveFile', async (_event, defaultName: string) => {
-    const result = await dialog.showSaveDialog(mainWindow!, {
-      defaultPath: workspaceFolder
-        ? path.join(workspaceFolder, defaultName)
-        : defaultName,
-      filters: [
-        { name: 'HTML', extensions: ['html'] },
-        { name: 'Markdown', extensions: ['md'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
-    });
-    return result.canceled ? null : result.filePath;
-  });
-
-  // ── Auth ─────────────────────────────────────────────────────────
-
-  ipcMain.handle('auth:getUser', async () => {
-    const token = await resolveGitHubToken();
-    if (!token) return null;
-    // Auto-init agent with the resolved token
-    if (!lastGithubToken) {
-      lastGithubToken = token;
-      initAgent({
-        githubToken: token,
-        appRoot: app.getAppPath(),
-        workspaceFolder: workspaceFolder || undefined,
-      }).catch(err => console.error('[copilot] Init on auth failed:', err));
-    }
-    const res = await httpsRequest('GET', 'https://api.github.com/user', {
-      'Authorization': `token ${token}`,
-      'Accept': 'application/json',
-      'User-Agent': 'Blueprint-Implementer/0.1.0',
-    }, null);
-    if (res.status >= 400) return null;
-    return JSON.parse(res.body);
-  });
-
-  ipcMain.handle('api:copilotToken', async () => {
-    const ghToken = await resolveGitHubToken();
-    if (!ghToken) return { status: 401, body: 'No GitHub token' };
-    return httpsRequest('GET', 'https://api.github.com/copilot_internal/v2/token', {
-      'Authorization': `token ${ghToken}`,
-      'Accept': 'application/json',
-      'User-Agent': 'Blueprint-Implementer/0.1.0',
-    }, null);
-  });
-
-  ipcMain.handle('api:copilotModels', async (_event, copilotToken: string) => {
-    return httpsRequest('GET', 'https://api.githubcopilot.com/models', {
-      'Authorization': `Bearer ${copilotToken}`,
-      'Accept': 'application/json',
-      ...COPILOT_HEADERS,
-    }, null);
-  });
-
-  // ── Copilot Agent ────────────────────────────────────────────────
-
-  ipcMain.handle('copilot:init', async () => {
-    const githubToken = await resolveGitHubToken();
-    if (!githubToken) return { ok: false, error: 'No GitHub token' };
-    lastGithubToken = githubToken;
-    return initAgent({
-      githubToken,
-      appRoot: app.getAppPath(),
-      workspaceFolder: workspaceFolder || undefined,
-    });
-  });
-
-  ipcMain.handle('copilot:implement', async (_event, opts: {
-    model: string;
-    userPrompt: string;
-  }) => {
-    const folder = workspaceFolder || process.cwd();
-    console.log(`[copilot] Implement request — model: ${opts.model}, workspace: ${folder}`);
-
-    // Include blueprint.md content in the system prompt so the agent has
-    // project context without needing a tool call first (matches CLI behavior).
-    // The default SYSTEM_PROMPT from copilot-agent.ts is used as the base;
-    // we only build a custom one here to append blueprint.md content.
-    let systemPrompt: string | undefined;
-    const blueprintPath = path.join(folder, 'blueprint.md');
-    if (fs.existsSync(blueprintPath)) {
-      try {
-        const blueprintContent = fs.readFileSync(blueprintPath, 'utf-8');
-        systemPrompt = SYSTEM_PROMPT + `\n\nBelow is the project\'s blueprint.md from the workspace root:\n\n${blueprintContent}`;
-      } catch {}
-    }
-
-    return implementWithAgent({
-      model: opts.model,
-      markdown: opts.userPrompt,
-      workspaceFolder: folder,
-      systemPrompt,
-      onEvent: (event) => {
-        // Relay all events to the renderer
-        mainWindow?.webContents.send('copilot:event', event);
-        // Also relay chunks for backward-compat streaming
-        if (event.type === 'chunk') {
-          mainWindow?.webContents.send('copilot:chunk', event.message);
-        }
-        // Log to terminal
-        if (event.type !== 'chunk') {
-          const prefix = `[copilot] ${event.type}`;
-          if (event.type === 'error') {
-            console.error(`${prefix}: ${event.message}`);
-          } else {
-            console.log(`${prefix}: ${event.message}`);
-          }
-        }
-      },
-    });
-  });
-
-  ipcMain.handle('copilot:stop', async () => {
-    await stopAgent();
-  });
-
-  // ── Git ──────────────────────────────────────────────────────────
-
-  ipcMain.handle('git:status', async () => {
-    if (!workspaceFolder) return [];
-    return new Promise<{ status: string; file: string }[]>((resolve) => {
-      execFile('git', ['status', '--porcelain'], { cwd: workspaceFolder! }, (err, stdout) => {
-        if (err) { resolve([]); return; }
-        const entries = stdout.split('\n').filter(Boolean).map(line => ({
-          status: line.slice(0, 2),
-          file: line.slice(3),
-        }));
-        resolve(entries);
-      });
-    });
-  });
-
-  // ── Terminal ────────────────────────────────────────────────────
-
-  ipcMain.handle('terminal:spawn', async () => {
-    if (shellProcess) {
-      shellProcess.kill();
-      shellProcess = null;
-    }
-    const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/zsh';
-    const cwd = workspaceFolder || process.cwd();
-    shellProcess = pty.spawn(shell, [], {
-      name: 'xterm-256color',
-      cols: 80,
-      rows: 24,
-      cwd,
-      env: process.env as Record<string, string>,
-    });
-    shellProcess.onData((data: string) => {
-      mainWindow?.webContents.send('terminal:data', data);
-    });
-    shellProcess.onExit(() => {
-      mainWindow?.webContents.send('terminal:exit');
-      shellProcess = null;
-    });
-    return { ok: true };
-  });
-
-  ipcMain.handle('terminal:write', async (_event, data: string) => {
-    shellProcess?.write(data);
-  });
-
-  ipcMain.handle('terminal:resize', async (_event, cols: number, rows: number) => {
-    shellProcess?.resize(cols, rows);
-  });
-
-  ipcMain.handle('terminal:kill', async () => {
-    shellProcess?.kill();
-    shellProcess = null;
-  });
+  throw new Error('Could not find Copilot CLI binary');
 }
 
-// ── Application menu ────────────────────────────────────────────────
+// --- Window Management ---
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    title: 'Blueprint Implementer',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
 
-function buildMenu(): void {
-  const isMac = process.platform === 'darwin';
+  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+
+  // Update title when workspace changes
+  if (workspaceFolder) {
+    mainWindow.setTitle(`Blueprint Implementer - ${path.basename(workspaceFolder)}`);
+  }
+}
+
+function createMenu() {
   const template: Electron.MenuItemConstructorOptions[] = [
-    ...(isMac
-      ? [{
-          label: app.name,
-          submenu: [
-            { role: 'about' as const },
-            { type: 'separator' as const },
-            { role: 'services' as const },
-            { type: 'separator' as const },
-            { role: 'hide' as const },
-            { role: 'hideOthers' as const },
-            { role: 'unhide' as const },
-            { type: 'separator' as const },
-            { role: 'quit' as const },
-          ],
-        }]
-      : []),
     {
       label: 'File',
       submenu: [
         {
-          label: 'Open Folder…',
+          label: 'Open Folder',
           accelerator: 'CmdOrCtrl+Shift+O',
-          click: () => mainWindow?.webContents.send('menu:openFolder'),
+          click: async () => {
+            const result = await dialog.showOpenDialog(mainWindow!, {
+              properties: ['openDirectory'],
+            });
+            if (!result.canceled && result.filePaths[0]) {
+              workspaceFolder = result.filePaths[0];
+              mainWindow?.setTitle(`Blueprint Implementer - ${path.basename(workspaceFolder)}`);
+              mainWindow?.webContents.send('workspace:changed', workspaceFolder);
+            }
+          },
         },
         { type: 'separator' },
-        isMac ? { role: 'close' } : { role: 'quit' },
+        { role: 'quit' },
       ],
     },
     {
@@ -415,96 +165,508 @@ function buildMenu(): void {
       ],
     },
   ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
 }
 
-// ── Window creation ─────────────────────────────────────────────────
-
-function createWindow(): void {
-  mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    title: workspaceFolder
-      ? `Blueprint Implementer — ${path.basename(workspaceFolder)}`
-      : 'Blueprint Implementer',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
+// --- IPC Handlers ---
+function setupIpcHandlers() {
+  // Dialog handlers
+  ipcMain.handle('dialog:openFolder', async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      properties: ['openDirectory'],
+    });
+    if (!result.canceled && result.filePaths[0]) {
+      workspaceFolder = result.filePaths[0];
+      mainWindow?.setTitle(`Blueprint Implementer - ${path.basename(workspaceFolder)}`);
+      return workspaceFolder;
+    }
+    return null;
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'index.html'));
-  mainWindow.on('closed', () => { mainWindow = null; });
+  ipcMain.handle('dialog:saveFile', async (_event, defaultName: string) => {
+    const result = await dialog.showSaveDialog(mainWindow!, {
+      defaultPath: defaultName,
+    });
+    return result.filePath || null;
+  });
 
-  mainWindow.webContents.on('did-finish-load', () => {
-    if (workspaceFolder) {
-      mainWindow?.webContents.send('workspace:folderOpened', workspaceFolder);
+  // Workspace handlers
+  ipcMain.handle('workspace:getFolder', () => workspaceFolder);
+
+  // File system handlers
+  ipcMain.handle('fs:readDir', async (_event, dirPath: string) => {
+    try {
+      const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+      const filtered = entries
+        .filter((e) => !e.name.startsWith('.'))
+        .map((e) => ({ name: e.name, isDirectory: e.isDirectory() }))
+        .sort((a, b) => {
+          if (a.isDirectory && !b.isDirectory) return -1;
+          if (!a.isDirectory && b.isDirectory) return 1;
+          return a.name.localeCompare(b.name);
+        });
+      return filtered;
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMain.handle('fs:readFile', async (_event, filePath: string) => {
+    return fs.promises.readFile(filePath, 'utf-8');
+  });
+
+  ipcMain.handle('fs:writeFile', async (_event, filePath: string, content: string) => {
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, content, 'utf-8');
+  });
+
+  ipcMain.handle('fs:delete', async (_event, entryPath: string) => {
+    const stat = await fs.promises.stat(entryPath);
+    if (stat.isDirectory()) {
+      await fs.promises.rm(entryPath, { recursive: true });
+    } else {
+      await fs.promises.unlink(entryPath);
+    }
+  });
+
+  ipcMain.handle('fs:cleanWorkspace', async (_event, options?: { dryRun?: boolean }) => {
+    if (!workspaceFolder) {
+      return { ok: false, error: 'No workspace folder' };
+    }
+
+    const blueprintFilesPath = path.join(workspaceFolder, '.blueprintfiles');
+    if (!fs.existsSync(blueprintFilesPath)) {
+      return { ok: false, error: 'No .blueprintfiles found' };
+    }
+
+    try {
+      const content = await fs.promises.readFile(blueprintFilesPath, 'utf-8');
+      const keepSet = new Set<string>();
+      keepSet.add('.blueprintfiles');
+      keepSet.add('.git');
+
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#')) {
+          // Remove trailing slash
+          keepSet.add(trimmed.replace(/\/$/, ''));
+        }
+      }
+
+      const entries = await fs.promises.readdir(workspaceFolder);
+      const toDelete: string[] = [];
+
+      for (const entry of entries) {
+        if (!keepSet.has(entry)) {
+          toDelete.push(entry);
+        }
+      }
+
+      if (options?.dryRun) {
+        return { ok: true, deleted: toDelete };
+      }
+
+      for (const entry of toDelete) {
+        const entryPath = path.join(workspaceFolder, entry);
+        const stat = await fs.promises.stat(entryPath);
+        if (stat.isDirectory()) {
+          await fs.promises.rm(entryPath, { recursive: true });
+        } else {
+          await fs.promises.unlink(entryPath);
+        }
+      }
+
+      return { ok: true, deleted: toDelete };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
+  });
+
+  // Auth handlers
+  ipcMain.handle('auth:getUser', async () => {
+    const token = await resolveGitHubToken();
+    if (!token) return null;
+
+    try {
+      const response = await httpRequest('https://api.github.com/user', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'User-Agent': 'Blueprint-Implementer',
+          Accept: 'application/json',
+        },
+      });
+
+      if (response.status === 200) {
+        return JSON.parse(response.body);
+      }
+    } catch {
+      // Auth failed
+    }
+    return null;
+  });
+
+  // Model listing via SDK
+  ipcMain.handle('copilot:listModels', async () => {
+    const token = await resolveGitHubToken();
+    if (!token) {
+      return { ok: false, models: [], error: 'No GitHub token' };
+    }
+
+    let tempClient: CopilotClient | null = null;
+    try {
+      const { CopilotClient: CopilotClientCtor } = await import('@github/copilot-sdk');
+      const cliPath = resolveCLIPath();
+      tempClient = new CopilotClientCtor({
+        cliPath,
+        cwd: process.cwd(),
+        githubToken: token,
+        logLevel: 'info',
+      });
+      await tempClient.start();
+      const models = await tempClient.listModels();
+      await tempClient.stop();
+      return { ok: true, models: models.map((m: { id: string; name: string }) => ({ id: m.id, name: m.name })) };
+    } catch (err) {
+      if (tempClient) await tempClient.stop().catch(() => {});
+      console.error('[copilot] listModels error:', err);
+      return { ok: false, models: [], error: String(err) };
+    }
+  });
+
+  // Copilot Agent handlers
+  ipcMain.handle('copilot:init', async (_event, githubToken: string) => {
+    try {
+      // Stop existing client
+      if (copilotClient) {
+        await copilotClient.stop();
+        copilotClient = null;
+      }
+      copilotSession = null;
+      lastWorkspaceFolder = null;
+
+      // Store init options for later client creation
+      agentInitOptions = {
+        githubToken,
+        appRoot: app.getAppPath(),
+      };
+
+      console.log('[copilot] Agent initialized');
+      return { ok: true };
+    } catch (err) {
+      console.error('[copilot] Init error:', err);
+      return { ok: false, error: String(err) };
+    }
+  });
+
+  ipcMain.handle('copilot:implement', async (_event, options: { model: string; systemPrompt?: string; userPrompt: string }) => {
+    if (!agentInitOptions) {
+      return { ok: false, error: 'Agent not initialized' };
+    }
+    if (!workspaceFolder) {
+      return { ok: false, error: 'No workspace folder' };
+    }
+
+    try {
+      // Dynamic import of ESM-only SDK
+      const { CopilotClient, defineTool } = await import('@github/copilot-sdk');
+      const { z } = await import('zod');
+
+      // Recreate client if workspace changed
+      if (!copilotClient || lastWorkspaceFolder !== workspaceFolder) {
+        if (copilotClient) {
+          await copilotClient.stop();
+        }
+
+        const appRoot = agentInitOptions.appRoot;
+        const safehousePath = path.join(appRoot, 'scripts', 'safehouse');
+        const cliPath = resolveCLIPath();
+
+        if (!fs.existsSync(safehousePath)) {
+          throw new Error(`Safehouse not found at ${safehousePath}. Run: npm install`);
+        }
+
+        const electronCachePath = path.join(require('os').homedir(), 'Library', 'Caches', 'electron');
+        const appSupportPath = path.join(require('os').homedir(), 'Library', 'Application Support', 'blueprint-implementer');
+        const electronExtraProfilePath = path.join(appRoot, 'scripts', 'electron-safehouse-extra.sb');
+
+        console.log('[copilot] Creating client with safehouse sandbox');
+        console.log('[copilot] CLI path:', cliPath);
+        console.log('[copilot] Workspace:', workspaceFolder);
+
+        copilotClient = new CopilotClient({
+          cwd: workspaceFolder,
+          cliPath: safehousePath,
+          cliArgs: [
+            '--workdir', workspaceFolder,
+            '--add-dirs-ro', appRoot,
+            '--enable=electron',
+            '--add-dirs', `${electronCachePath}:${appSupportPath}`,
+            '--append-profile', electronExtraProfilePath,
+            '--env-pass=COPILOT_SDK_AUTH_TOKEN',
+            cliPath,
+          ],
+          githubToken: agentInitOptions.githubToken,
+          autoRestart: true,
+          logLevel: 'info',
+        });
+
+        lastWorkspaceFolder = workspaceFolder;
+      }
+
+      // Build system prompt
+      let systemPrompt = options.systemPrompt || getDefaultSystemPrompt();
+
+      // Append blueprint.md content if it exists
+      const blueprintPath = path.join(workspaceFolder, 'blueprint.md');
+      if (fs.existsSync(blueprintPath)) {
+        const blueprintContent = await fs.promises.readFile(blueprintPath, 'utf-8');
+        systemPrompt += '\n\n' + blueprintContent;
+      }
+
+      // Define custom tools
+      const openPreviewTool = defineTool('open_in_preview_browser', {
+        description: 'Opens a URL in the application\'s Preview panel (the embedded browser on the right side of the UI). Use this after starting a dev server to show the running application to the user.',
+        parameters: z.object({
+          url: z.string().describe('The URL to open (e.g., http://localhost:3000)'),
+        }),
+        handler: async ({ url }: { url: string }) => {
+          mainWindow?.webContents.send('copilot:event', {
+            type: 'preview_url',
+            data: { url },
+          });
+          return `Opened ${url} in the Preview panel.`;
+        },
+      });
+
+      // Create session
+      console.log('[copilot] Creating session with model:', options.model);
+      copilotSession = await copilotClient.createSession({
+        model: options.model,
+        streaming: true,
+        workingDirectory: workspaceFolder,
+        systemMessage: { mode: 'append', content: systemPrompt },
+        tools: [openPreviewTool],
+        onPermissionRequest: async () => ({ kind: 'approved' as const }),
+      });
+
+      // Subscribe to events
+      const unsubscribe = copilotSession.on((event) => {
+        const eventType = event.type;
+        const eventData = event.data as Record<string, unknown>;
+
+        // Log non-delta events
+        if (eventType !== 'assistant.message_delta') {
+          console.log(`[copilot] ${eventType}`, eventType.includes('usage') ? eventData : '');
+        }
+
+        // Send events to renderer
+        switch (eventType) {
+          case 'assistant.message_delta':
+            mainWindow?.webContents.send('copilot:chunk', eventData.deltaContent || '');
+            mainWindow?.webContents.send('copilot:event', { type: 'chunk', data: eventData });
+            break;
+          case 'tool.execution_start':
+            mainWindow?.webContents.send('copilot:event', { type: 'tool_start', data: eventData });
+            break;
+          case 'tool.execution_complete':
+            mainWindow?.webContents.send('copilot:event', { type: 'tool_complete', data: eventData });
+            // Check for file changes
+            const toolName = eventData.toolName as string;
+            if (['create', 'edit', 'bash', 'write_file', 'create_file'].some(t => toolName?.includes(t))) {
+              mainWindow?.webContents.send('copilot:event', { type: 'files_changed', data: {} });
+            }
+            break;
+          case 'assistant.usage':
+            mainWindow?.webContents.send('copilot:event', { type: 'usage', data: eventData });
+            break;
+          case 'session.error':
+            mainWindow?.webContents.send('copilot:event', { type: 'error', data: eventData });
+            break;
+          case 'session.idle':
+            mainWindow?.webContents.send('copilot:event', { type: 'done', data: {} });
+            break;
+          default:
+            mainWindow?.webContents.send('copilot:event', { type: 'log', data: { message: eventType } });
+        }
+      });
+
+      // Send the user prompt
+      console.log('[copilot] Sending prompt...');
+      try {
+        await copilotSession.sendAndWait({ prompt: options.userPrompt }, 600000);
+        console.log('[copilot] Implementation complete');
+        unsubscribe();
+        return { ok: true };
+      } catch (err) {
+        console.error('[copilot] Implementation error:', err);
+        unsubscribe();
+        return { ok: false, error: String(err) };
+      }
+    } catch (err) {
+      console.error('[copilot] Implementation error:', err);
+      return { ok: false, error: String(err) };
+    }
+  });
+
+  ipcMain.handle('copilot:stop', async () => {
+    if (copilotSession) {
+      // Session doesn't have a stop method, just clear reference
+      copilotSession = null;
+    }
+    if (copilotClient) {
+      await copilotClient.stop();
+      copilotClient = null;
+    }
+    console.log('[copilot] Agent stopped');
+  });
+
+  // Git handlers
+  ipcMain.handle('git:status', async () => {
+    if (!workspaceFolder) return [];
+
+    try {
+      const { stdout } = await execFileAsync('git', ['status', '--porcelain'], {
+        cwd: workspaceFolder,
+      });
+
+      const entries: Array<{ status: string; file: string }> = [];
+      for (const line of stdout.split('\n')) {
+        if (line.length >= 3) {
+          const status = line.substring(0, 2).trim();
+          const file = line.substring(3);
+          entries.push({ status, file });
+        }
+      }
+      return entries;
+    } catch {
+      return [];
+    }
+  });
+
+  // Terminal handlers
+  ipcMain.handle('terminal:spawn', async () => {
+    // Kill existing pty
+    if (pty) {
+      pty.kill();
+      pty = null;
+    }
+
+    try {
+      const nodePty = await import('node-pty');
+      const shell = process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/bash');
+      const cwd = workspaceFolder || process.env.HOME || '/';
+
+      pty = nodePty.spawn(shell, [], {
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 24,
+        cwd,
+        env: { ...process.env, TERM: 'xterm-256color' },
+      });
+
+      pty.onData((data) => {
+        mainWindow?.webContents.send('terminal:data', data);
+      });
+
+      pty.onExit(({ exitCode }) => {
+        mainWindow?.webContents.send('terminal:exit', exitCode);
+        pty = null;
+      });
+
+      return { ok: true };
+    } catch (err) {
+      console.error('Terminal spawn error:', err);
+      return { ok: false, error: String(err) };
+    }
+  });
+
+  ipcMain.on('terminal:write', (_event, data: string) => {
+    pty?.write(data);
+  });
+
+  ipcMain.on('terminal:resize', (_event, cols: number, rows: number) => {
+    pty?.resize(cols, rows);
+  });
+
+  ipcMain.handle('terminal:kill', () => {
+    if (pty) {
+      pty.kill();
+      pty = null;
     }
   });
 }
 
-// ── App lifecycle ───────────────────────────────────────────────────
+function getDefaultSystemPrompt(): string {
+  return `You are a code generator working in a project workspace. The workspace root contains a blueprint.md file that describes the application to build — its architecture, components, file structure, and behavior. The blueprint may be self-contained or it may reference other markdown documents in the workspace that together make up the full specification. Your job is to read the blueprint and turn it into working code.
 
-async function main(): Promise<void> {
-  await app.whenReady();
+Follow this workflow:
 
-  // Check for folder argument and implement command on command line
-  const args = process.argv.slice(app.isPackaged ? 1 : 2);
-  let autoImplementFile: string | null = null;
-  let implementMode = false;
+## Planning & Discovery
+1. Start by reading blueprint.md in the workspace root. If it references other markdown files, read those too to get the complete picture.
+2. Scan the existing project structure — list directories, check for existing source files, package.json, build scripts, and installed tools. Understand what already exists before writing anything.
+3. Form a plan: identify which files need to be created or updated, in what order, and how you will verify the result.
 
-  for (const arg of args) {
-    if (arg === 'implement') {
-      implementMode = true;
-      continue;
-    }
-    if (arg.startsWith('-')) continue;
-    const resolved = path.resolve(arg);
-    if (!fs.existsSync(resolved)) continue;
-    if (fs.statSync(resolved).isDirectory()) {
-      workspaceFolder = resolved;
-    } else if (fs.statSync(resolved).isFile()) {
-      autoImplementFile = resolved;
-      // Infer workspace folder from file's directory if not set
-      if (!workspaceFolder) workspaceFolder = path.dirname(resolved);
-    }
+## Implementation
+4. Each section in the blueprint describes a module, component, or file to generate. Create or update the source files in the workspace using your file tools. Write complete, working code — not stubs or placeholders.
+5. Use strong typing everywhere. Avoid the \`any\` type — use precise types, interfaces, or generics instead.
+6. The blueprint defines the project's folder structure, naming conventions, build tools, and processes. Follow those conventions exactly when deciding where to place files and how to structure them.
+7. If the project already has existing files, preserve them unless the blueprint explicitly describes replacing them. Merge new code with the existing codebase.
+
+## Verification
+8. The generated source must compile and type-check without errors. After writing files, install any needed dependencies (npm install, etc.) and verify both type-checking (e.g., \`npx tsc --noEmit\`) and the build step pass without errors.
+9. When installing packages, always use the latest versions available. Do not pin to old versions you may have seen during training — use \`npm install <package>@latest\` or omit version specifiers to get the current release.
+10. Write tests for any existing functionality you changed and for any new functionality you implemented. Run all tests and verify they pass. Don't just re-read your own code — execute it.
+11. If compilation or tests fail, read the full error output, diagnose the root cause, and fix it. If you find yourself editing the same file repeatedly without progress, step back and reconsider your approach.
+12. After the build passes, scan the blueprint documents for sections titled "Verification". For each one, write a test script that verifies the described behavior (e.g., using Playwright for Electron apps, or the project's test framework). Run all verification tests and fix any failures before considering the implementation complete.
+
+## Delivery
+13. If the project has a dev server, start it and use the open_in_preview_browser tool to show it in the Preview panel.
+
+You have a custom tool available: open_in_preview_browser. Call it with a URL (e.g., http://localhost:3000) to open that URL in the application's embedded browser. Use this after starting a dev server so the user can see the running application.`;
+}
+
+// --- App Lifecycle ---
+// Handle --no-sandbox flag before app ready
+// process.argv: [electron-binary, main-script, ...user-args]
+const userArgs = process.argv.slice(2);
+if (userArgs.includes('--no-sandbox')) {
+  app.commandLine.appendSwitch('no-sandbox');
+}
+
+app.whenReady().then(() => {
+  // Parse command line arguments for workspace folder
+  // Find the first non-flag argument that is a valid directory
+  const folderArg = userArgs.find((arg) => !arg.startsWith('-') && fs.existsSync(arg) && fs.statSync(arg).isDirectory());
+  if (folderArg) {
+    workspaceFolder = path.resolve(folderArg);
+    console.log('[electron] Workspace folder:', workspaceFolder);
   }
 
-  // Default workspace folder: restore last opened
-  if (!workspaceFolder) {
-    workspaceFolder = loadLastFolder();
-  }
-  if (workspaceFolder) {
-    saveLastFolder();
-  }
-
-  if (implementMode) {
-    console.log(`[main] Implement mode enabled${autoImplementFile ? ` — file: ${autoImplementFile}` : ''}`);
-  }
-
-  setupIPC();
-  buildMenu();
+  setupIpcHandlers();
+  createMenu();
   createWindow();
 
-  // Send auto-implement command after the renderer is ready
-  if (implementMode) {
-    mainWindow?.webContents.on('did-finish-load', () => {
-      // Give the renderer time to init auth and restore session
-      setTimeout(() => {
-        mainWindow?.webContents.send('command:implement', autoImplementFile);
-      }, 2000);
-    });
-  }
-
   app.on('activate', () => {
-    if (!mainWindow) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
   });
-}
-
-app.on('window-all-closed', () => {
-  stopAgent().catch(() => {});
-  if (process.platform !== 'darwin') app.quit();
 });
 
-main();
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
+app.on('will-quit', async () => {
+  if (pty) {
+    pty.kill();
+  }
+  if (copilotClient) {
+    await copilotClient.stop();
+  }
+});

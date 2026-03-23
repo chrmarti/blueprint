@@ -1,82 +1,81 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
+// layout.ts - Drag-handle resizable layout for Blueprint Implementer
+
+let isDragging = false;
+let currentHandle: HTMLElement | null = null;
+let startX = 0;
+let startY = 0;
+let startWidth = 0;
+let startHeight = 0;
+let targetElement: HTMLElement | null = null;
 
 export function initLayout(): void {
-  // Horizontal (column) drag handles
-  const handles = document.querySelectorAll('.drag-handle');
-  handles.forEach((handle) => {
-    const el = handle as HTMLElement;
-    const leftId = el.dataset.left!;
-    const rightId = el.dataset.right!;
-    const leftPanel = document.getElementById(leftId) as HTMLElement;
-    const rightPanel = document.getElementById(rightId) as HTMLElement;
+  const dragHandleLeft = document.getElementById('drag-handle-left');
+  const dragHandleRight = document.getElementById('drag-handle-right');
+  const dragHandleTerminal = document.getElementById('drag-handle-terminal');
 
-    let startX = 0;
-    let startLeftWidth = 0;
-    let startRightWidth = 0;
-
-    const onMouseMove = (e: MouseEvent) => {
-      const dx = e.clientX - startX;
-      const newLeft = Math.max(80, startLeftWidth + dx);
-      const newRight = Math.max(80, startRightWidth - dx);
-      leftPanel.style.flex = 'none';
-      rightPanel.style.flex = 'none';
-      leftPanel.style.width = `${newLeft}px`;
-      rightPanel.style.width = `${newRight}px`;
-    };
-
-    const onMouseUp = () => {
-      el.classList.remove('active');
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-
-    el.addEventListener('mousedown', (e: MouseEvent) => {
-      e.preventDefault();
-      el.classList.add('active');
-      startX = e.clientX;
-      startLeftWidth = leftPanel.getBoundingClientRect().width;
-      startRightWidth = rightPanel.getBoundingClientRect().width;
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-      document.addEventListener('mousemove', onMouseMove);
-      document.addEventListener('mouseup', onMouseUp);
-    });
-  });
-
-  // Vertical (row) drag handle for terminal panel
-  const termHandle = document.getElementById('terminal-drag-handle');
-  const termPanel = document.getElementById('terminal-panel');
-  if (termHandle && termPanel) {
-    let startY = 0;
-    let startHeight = 0;
-
-    const onMouseMove = (e: MouseEvent) => {
-      const dy = startY - e.clientY;
-      termPanel.style.height = `${Math.max(60, startHeight + dy)}px`;
-    };
-
-    const onMouseUp = () => {
-      termHandle.classList.remove('active');
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-
-    termHandle.addEventListener('mousedown', (e: MouseEvent) => {
-      e.preventDefault();
-      termHandle.classList.add('active');
-      startY = e.clientY;
-      startHeight = termPanel.getBoundingClientRect().height;
-      document.body.style.cursor = 'row-resize';
-      document.body.style.userSelect = 'none';
-      document.addEventListener('mousemove', onMouseMove);
-      document.addEventListener('mouseup', onMouseUp);
-    });
+  if (dragHandleLeft) {
+    dragHandleLeft.addEventListener('mousedown', (e) => startDrag(e, 'left'));
   }
+
+  if (dragHandleRight) {
+    dragHandleRight.addEventListener('mousedown', (e) => startDrag(e, 'right'));
+  }
+
+  if (dragHandleTerminal) {
+    dragHandleTerminal.addEventListener('mousedown', (e) => startDrag(e, 'terminal'));
+  }
+
+  document.addEventListener('mousemove', onDrag);
+  document.addEventListener('mouseup', endDrag);
+}
+
+function startDrag(e: MouseEvent, type: 'left' | 'right' | 'terminal'): void {
+  isDragging = true;
+  currentHandle = e.target as HTMLElement;
+  currentHandle.classList.add('dragging');
+  startX = e.clientX;
+  startY = e.clientY;
+
+  if (type === 'left') {
+    targetElement = document.getElementById('sidebar');
+    startWidth = targetElement?.offsetWidth || 0;
+  } else if (type === 'right') {
+    targetElement = document.getElementById('output-panel');
+    startWidth = targetElement?.offsetWidth || 0;
+  } else if (type === 'terminal') {
+    targetElement = document.getElementById('terminal-container');
+    startHeight = targetElement?.offsetHeight || 0;
+  }
+
+  e.preventDefault();
+}
+
+function onDrag(e: MouseEvent): void {
+  if (!isDragging || !targetElement) return;
+
+  const handle = currentHandle;
+  if (handle?.id === 'drag-handle-left') {
+    const delta = e.clientX - startX;
+    const newWidth = Math.max(180, Math.min(500, startWidth + delta));
+    targetElement.style.width = `${newWidth}px`;
+  } else if (handle?.id === 'drag-handle-right') {
+    const delta = startX - e.clientX;
+    const newWidth = Math.max(280, Math.min(600, startWidth + delta));
+    targetElement.style.width = `${newWidth}px`;
+  } else if (handle?.id === 'drag-handle-terminal') {
+    const delta = startY - e.clientY;
+    const newHeight = Math.max(60, Math.min(400, startHeight + delta));
+    targetElement.style.height = `${newHeight}px`;
+    // Trigger resize observer for terminal
+    window.dispatchEvent(new Event('resize'));
+  }
+}
+
+function endDrag(): void {
+  if (currentHandle) {
+    currentHandle.classList.remove('dragging');
+  }
+  isDragging = false;
+  currentHandle = null;
+  targetElement = null;
 }

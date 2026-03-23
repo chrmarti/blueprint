@@ -1,66 +1,97 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
+// Global type declarations for Blueprint Implementer
 
-export {};
+interface GitStatusEntry {
+  status: string;
+  file: string;
+}
+
+interface CopilotListModelsResponse {
+  ok: boolean;
+  models: Array<{
+    id: string;
+    name: string;
+  }>;
+  error?: string;
+}
+
+interface GitHubUser {
+  login: string;
+  avatar_url: string;
+  name?: string;
+}
+
+interface ImplementResult {
+  ok: boolean;
+  error?: string;
+}
+
+interface CleanResult {
+  ok: boolean;
+  deleted?: string[];
+  error?: string;
+}
 
 interface DirEntry {
   name: string;
   isDirectory: boolean;
 }
 
-interface ApiResponse {
-  status: number;
-  body: string;
-  error?: string;
-}
-
 interface ElectronAPI {
-  // File system
+  // Dialog
   openFolder(): Promise<string | null>;
+  saveFile(defaultName: string): Promise<string | null>;
+
+  // Workspace
+  getWorkspaceFolder(): Promise<string | null>;
+
+  // File system
   readDir(dirPath: string): Promise<DirEntry[]>;
   readFile(filePath: string): Promise<string>;
   writeFile(filePath: string, content: string): Promise<void>;
-  deleteEntry(targetPath: string): Promise<void>;
-  cleanWorkspace(opts?: { dryRun?: boolean }): Promise<{ ok: boolean; deleted?: string[]; toDelete?: string[]; error?: string }>;
-  getWorkspaceFolder(): Promise<string | null>;
-  showSaveDialog(defaultName: string): Promise<string | null>;
+  deleteEntry(entryPath: string): Promise<void>;
+  cleanWorkspace(options?: { dryRun?: boolean }): Promise<CleanResult>;
 
   // Auth
-  getAuthUser(): Promise<{ login: string; avatar_url: string; name: string | null } | null>;
-  copilotToken(): Promise<ApiResponse>;
-  copilotModels(copilotToken: string): Promise<ApiResponse>;
-  // Copilot SDK
-  copilotInit(): Promise<{ ok: boolean; error?: string }>;
-  copilotImplement(opts: { model: string; userPrompt: string }): Promise<{ ok: boolean; content?: string; error?: string }>;
-  copilotStop(): Promise<void>;
-  onCopilotChunk(callback: (delta: string) => void): void;
-  removeCopilotChunkListeners(): void;
-  onCopilotEvent(callback: (event: { type: string; message?: string; data?: any }) => void): void;
-  removeCopilotEventListeners(): void;
+  getUser(): Promise<GitHubUser | null>;
 
-  // Window events
-  onFolderOpened(callback: (folder: string) => void): void;
-  onMenuOpenFolder(callback: () => void): void;
-  onAutoImplement(callback: (filePath: string | null) => void): void;
-  gitStatus(): Promise<{ status: string; file: string }[]>;
+  // API
+  copilotListModels(): Promise<CopilotListModelsResponse>;
+
+  // Copilot Agent
+  copilotInit(githubToken: string): Promise<{ ok: boolean; error?: string }>;
+  copilotImplement(options: {
+    model: string;
+    systemPrompt?: string;
+    userPrompt: string;
+  }): Promise<ImplementResult>;
+  copilotStop(): Promise<void>;
+  onCopilotChunk(callback: (chunk: string) => void): void;
+  onCopilotEvent(callback: (event: ImplementEvent) => void): void;
+  removeCopilotListeners(): void;
+
+  // Git
+  gitStatus(): Promise<GitStatusEntry[]>;
 
   // Terminal
-  terminalSpawn(): Promise<{ ok: boolean; error?: string }>;
-  terminalWrite(data: string): Promise<void>;
-  terminalResize(cols: number, rows: number): Promise<void>;
-  terminalKill(): Promise<void>;
+  terminalSpawn(): Promise<{ ok: boolean }>;
+  terminalWrite(data: string): void;
+  terminalResize(cols: number, rows: number): void;
+  terminalKill(): void;
   onTerminalData(callback: (data: string) => void): void;
+  onTerminalExit(callback: (code: number) => void): void;
   removeTerminalDataListeners(): void;
-  onTerminalExit(callback: () => void): void;
   removeTerminalExitListeners(): void;
+}
 
-  platform: string;
+interface ImplementEvent {
+  type: 'log' | 'chunk' | 'tool_start' | 'tool_complete' | 'usage' | 'error' | 'done' | 'files_changed' | 'preview_url';
+  data: Record<string, unknown>;
 }
 
 declare global {
   interface Window {
-    electronAPI?: ElectronAPI;
+    electronAPI: ElectronAPI;
   }
 }
+
+export {};

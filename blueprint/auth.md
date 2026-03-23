@@ -19,14 +19,14 @@ The application resolves a GitHub token automatically: if the `GITHUB_TOKEN` env
 - The main process resolves the token, fetches the GitHub user (`GET https://api.github.com/user`), and returns the user object.
 - The toolbar shows the signed-in user's avatar and login name.
 
-## Copilot Token
+## Model Listing
 
-- After resolving the GitHub token, the app fetches a Copilot API token via IPC (`api:copilotToken`).
-- The main process resolves the GitHub token internally — the renderer does not pass it.
-- The Copilot token is cached in `localStorage` and refreshed when it nears expiration.
+- After authentication completes, the renderer calls `copilot:listModels` via IPC.
+- The main process resolves the GitHub token, creates a temporary `CopilotClient` from `@github/copilot-sdk`, calls `listModels()`, and stops the client.
+- This uses the same SDK path as the CLI — the SDK handles Copilot token exchange internally.
+- The renderer does not manage Copilot tokens; only the GitHub token (resolved in the main process) is needed.
 
 ## IPC API
 
 - `auth:getUser()` → resolves the GitHub token and returns the user object (or null)
-- `api:copilotToken()` → resolves the GitHub token and fetches a Copilot token — returns `{ status, body }`
-- `api:copilotModels(copilotToken)` → `GET https://api.githubcopilot.com/models` — returns `{ status, body }`
+- `copilot:listModels()` → resolves the GitHub token, starts a temporary SDK client, returns `{ ok, models: [{ id, name }], error? }`

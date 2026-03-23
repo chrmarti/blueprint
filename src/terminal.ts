@@ -1,93 +1,122 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
+// terminal.ts - Integrated terminal panel for Blueprint Implementer
 import { Terminal } from '@xterm/xterm';
+import { getTheme } from './storage';
 
-let term: Terminal;
-let containerEl: HTMLElement;
-let spawned = false;
-
-function getTermTheme(): { background: string; foreground: string; cursor: string } {
-  const style = getComputedStyle(document.documentElement);
-  return {
-    background: style.getPropertyValue('--bg-surface').trim() || '#252536',
-    foreground: style.getPropertyValue('--text').trim() || '#cdd6f4',
-    cursor: style.getPropertyValue('--text-muted').trim() || '#888caa',
-  };
-}
+let terminal: Terminal | null = null;
+let terminalContainer: HTMLElement | null = null;
+let resizeObserver: ResizeObserver | null = null;
 
 export function initTerminalPanel(): void {
-  containerEl = document.getElementById('terminal-container') as HTMLElement;
+  terminalContainer = document.getElementById('terminal');
+  if (!terminalContainer) return;
 
-  const colors = getTermTheme();
-  term = new Terminal({
-    convertEol: false,
-    scrollback: 5000,
-    fontSize: 13,
-    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
-    theme: {
-      background: colors.background,
-      foreground: colors.foreground,
-      cursor: colors.cursor,
-    },
-    cursorStyle: 'bar',
+  // Create terminal instance
+  terminal = new Terminal({
     cursorBlink: true,
+    cursorStyle: 'bar',
+    fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace",
+    fontSize: 13,
+    lineHeight: 1.2,
+    theme: getTerminalTheme(),
   });
-  term.open(containerEl);
 
-  // Send user input to the pty
-  term.onData((data) => {
-    window.electronAPI?.terminalWrite(data);
+  terminal.open(terminalContainer);
+
+  // Setup IPC listeners
+  window.electronAPI.onTerminalData((data) => {
+    terminal?.write(data);
   });
 
-  // Fit terminal to container
-  const fit = () => {
-    const dims = containerEl.getBoundingClientRect();
-    if (dims.width > 0 && dims.height > 0) {
-      const cellWidth = term.options.fontSize! * 0.6;
-      const cellHeight = (term.options.fontSize! || 13) * 1.2;
-      const cols = Math.max(20, Math.floor((dims.width - 16) / cellWidth));
-      const rows = Math.max(3, Math.floor((dims.height - 8) / cellHeight));
-      term.resize(cols, rows);
-      window.electronAPI?.terminalResize(cols, rows);
-    }
-  };
-  new ResizeObserver(fit).observe(containerEl);
+  window.electronAPI.onTerminalExit((code) => {
+    terminal?.writeln(`\r\n[Process exited with code ${code}]`);
+  });
 
-  // Receive data from pty
-  if (window.electronAPI) {
-    window.electronAPI.onTerminalData((data) => {
-      term.write(data);
-    });
-    window.electronAPI.onTerminalExit(() => {
-      term.writeln('\r\n[Process exited]');
-      spawned = false;
-    });
+  // Forward input to main process
+  terminal.onData((data) => {
+    window.electronAPI.terminalWrite(data);
+  });
+
+  // Setup resize observer
+  resizeObserver = new ResizeObserver(() => {
+    fitTerminal();
+  });
+  resizeObserver.observe(terminalContainer);
+
+  // Spawn shell
+  spawnShell();
+}
+
+async function spawnShell(): Promise<void> {
+  const result = await window.electronAPI.terminalSpawn();
+  if (result.ok) {
+    // Fit terminal after spawn
+    fitTerminal();
+  } else {
+    terminal?.writeln('[Failed to spawn shell]');
   }
 }
 
-export async function spawnTerminal(): Promise<void> {
-  if (!window.electronAPI) return;
-  if (spawned) {
-    await window.electronAPI.terminalKill();
-    spawned = false;
+function fitTerminal(): void {
+  if (!terminal || !terminalContainer) return;
+
+  // Calculate dimensions
+  const dims = calculateDimensions();
+  if (dims.cols > 0 && dims.rows > 0) {
+    terminal.resize(dims.cols, dims.rows);
+    window.electronAPI.terminalResize(dims.cols, dims.rows);
   }
-  const result = await window.electronAPI.terminalSpawn();
-  if (result.ok) {
-    spawned = true;
-    term.clear();
-    term.focus();
+}
+
+function calculateDimensions(): { cols: number; rows: number } {
+  if (!terminal || !terminalContainer) {
+    return { cols: 80, rows: 24 };
   }
+
+  const core = (terminal as unknown as { _core: { _renderService: { dimensions: { css: { cell: { width: number; height: number } } } } } })._core;
+  const cellWidth = core?._renderService?.dimensions?.css?.cell?.width || 9;
+  const cellHeight = core?._renderService?.dimensions?.css?.cell?.height || 17;
+
+  const rect = terminalContainer.getBoundingClientRect();
+  const cols = Math.max(2, Math.floor(rect.width / cellWidth));
+  const rows = Math.max(2, Math.floor(rect.height / cellHeight));
+
+  return { cols, rows };
+}
+
+function getTerminalTheme(): { background: string; foreground: string; cursor: string; cursorAccent: string } {
+  const theme = getTheme();
+  if (theme === 'dark') {
+    return {
+      background: '#1e1e1e',
+      foreground: '#e0e0e0',
+      cursor: '#e0e0e0',
+      cursorAccent: '#1e1e1e',
+    };
+  }
+  return {
+    background: '#ffffff',
+    foreground: '#1a1a1a',
+    cursor: '#1a1a1a',
+    cursorAccent: '#ffffff',
+  };
 }
 
 export function updateTerminalTheme(): void {
-  if (!term) return;
-  const colors = getTermTheme();
-  term.options.theme = {
-    background: colors.background,
-    foreground: colors.foreground,
-    cursor: colors.cursor,
-  };
+  if (terminal) {
+    terminal.options.theme = getTerminalTheme();
+  }
+}
+
+export async function respawnTerminal(): Promise<void> {
+  await window.electronAPI.terminalKill();
+  terminal?.clear();
+  await spawnShell();
+}
+
+export function disposeTerminal(): void {
+  window.electronAPI.removeTerminalDataListeners();
+  window.electronAPI.removeTerminalExitListeners();
+  resizeObserver?.disconnect();
+  terminal?.dispose();
+  terminal = null;
 }

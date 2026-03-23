@@ -1,103 +1,124 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
+// editor.ts - Editor panel (Edit and Browser tabs) for Blueprint Implementer
 
-export interface OutlineEntry {
-  level: number;
-  text: string;
-  line: number;
-}
+import { getFontSize } from './storage';
 
-let editorEl: HTMLTextAreaElement;
-let tabEdit: HTMLButtonElement;
-let tabBrowser: HTMLButtonElement;
-let browserView: HTMLElement;
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
-let onSave: (text: string) => void = () => {};
+let currentFilePath: string | null = null;
+let editorTextarea: HTMLTextAreaElement | null = null;
+let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+let isDirty = false;
 
-export function initEditor(opts: { onSave: (text: string) => void }): void {
-  editorEl = document.getElementById('editor-area') as HTMLTextAreaElement;
-  tabEdit = document.getElementById('tab-edit') as HTMLButtonElement;
-  tabBrowser = document.getElementById('tab-browser') as HTMLButtonElement;
-  browserView = document.getElementById('browser-view') as HTMLElement;
-  onSave = opts.onSave;
+export function initEditor(): void {
+  editorTextarea = document.getElementById('editor-textarea') as HTMLTextAreaElement;
 
-  editorEl.addEventListener('input', handleInput);
-  tabEdit.addEventListener('click', () => showEditorTab('edit'));
-  tabBrowser.addEventListener('click', () => showEditorTab('browser'));
+  // Setup tabs
+  const tabs = document.querySelectorAll('.editor-tab');
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const tabName = tab.getAttribute('data-tab');
+      if (tabName) {
+        switchEditorTab(tabName);
+      }
+    });
+  });
 
-  // File drop
-  editorEl.addEventListener('dragover', (e) => e.preventDefault());
-  editorEl.addEventListener('drop', async (e) => {
-    e.preventDefault();
-    const file = e.dataTransfer?.files[0];
-    if (file && file.name.endsWith('.md')) {
-      editorEl.value = await file.text();
-      handleInput();
+  // Setup autosave
+  if (editorTextarea) {
+    editorTextarea.addEventListener('input', () => {
+      isDirty = true;
+      scheduleAutosave();
+    });
+
+    // Apply font size
+    editorTextarea.style.fontSize = `${getFontSize()}px`;
+  }
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      e.preventDefault();
+      saveCurrentFile();
     }
   });
 }
 
-export function setContent(text: string): void {
-  editorEl.value = text;
+export function switchEditorTab(tabName: string): void {
+  // Update tab buttons
+  document.querySelectorAll('.editor-tab').forEach((tab) => {
+    tab.classList.toggle('active', tab.getAttribute('data-tab') === tabName);
+  });
+
+  // Update tab content
+  document.querySelectorAll('.editor-content .tab-content').forEach((content) => {
+    content.classList.toggle('active', content.getAttribute('data-tab') === tabName);
+  });
 }
 
-export function getContent(): string {
-  return editorEl.value;
-}
+export async function openFile(filePath: string): Promise<void> {
+  // Save current file first
+  if (isDirty && currentFilePath) {
+    await saveCurrentFile();
+  }
 
-export function setFontSize(size: number): void {
-  editorEl.style.fontSize = `${size}px`;
-}
+  try {
+    const content = await window.electronAPI.readFile(filePath);
+    currentFilePath = filePath;
+    if (editorTextarea) {
+      editorTextarea.value = content;
+    }
+    isDirty = false;
 
-function handleInput(): void {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    onSave(editorEl.value);
-  }, 500);
-}
-
-function showEditorTab(tab: 'edit' | 'browser'): void {
-  if (tab === 'edit') {
-    editorEl.style.display = '';
-    browserView.style.display = 'none';
-    tabEdit.classList.add('active');
-    tabBrowser.classList.remove('active');
-  } else {
-    editorEl.style.display = 'none';
-    browserView.style.display = 'flex';
-    tabBrowser.classList.add('active');
-    tabEdit.classList.remove('active');
+    // Switch to Edit tab
+    switchEditorTab('edit');
+  } catch (err) {
+    console.error('Failed to open file:', err);
   }
 }
 
-export function showBrowserTab(): void {
-  showEditorTab('browser');
+export function getCurrentFilePath(): string | null {
+  return currentFilePath;
 }
 
-export function exportFile(): void {
-  const blob = new Blob([editorEl.value], { type: 'text/markdown' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'main.md';
-  a.click();
-  URL.revokeObjectURL(url);
+export function getEditorContent(): string {
+  return editorTextarea?.value || '';
 }
 
-export function importFile(): Promise<string> {
-  return new Promise((resolve) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.md';
-    input.addEventListener('change', async () => {
-      const file = input.files?.[0];
-      if (file) {
-        const text = await file.text();
-        resolve(text);
-      }
-    });
-    input.click();
-  });
+export function setEditorContent(content: string): void {
+  if (editorTextarea) {
+    editorTextarea.value = content;
+    isDirty = true;
+  }
+}
+
+export function clearEditor(): void {
+  currentFilePath = null;
+  if (editorTextarea) {
+    editorTextarea.value = '';
+  }
+  isDirty = false;
+}
+
+export function updateEditorFontSize(size: number): void {
+  if (editorTextarea) {
+    editorTextarea.style.fontSize = `${size}px`;
+  }
+}
+
+function scheduleAutosave(): void {
+  if (saveTimeout) {
+    clearTimeout(saveTimeout);
+  }
+  saveTimeout = setTimeout(() => {
+    saveCurrentFile();
+  }, 500);
+}
+
+async function saveCurrentFile(): Promise<void> {
+  if (!currentFilePath || !editorTextarea || !isDirty) return;
+
+  try {
+    await window.electronAPI.writeFile(currentFilePath, editorTextarea.value);
+    isDirty = false;
+  } catch (err) {
+    console.error('Failed to save file:', err);
+  }
 }

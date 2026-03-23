@@ -1,22 +1,28 @@
 {
-  "name": "blueprint-implementer-cli",
-  "version": "0.1.0",
-  "description": "CLI tool for implementing workspaces from blueprint markdown files using the Copilot SDK agent",
-  "license": "SEE LICENSE IN LICENSE.txt",
+  "name": "blueprint",
+  "version": "1.0.0",
+  "description": "CLI for implementing markdown blueprints into code using the Copilot SDK",
   "type": "module",
   "bin": {
-    "blueprint": "./implement-cli.mjs"
+    "blueprint": "./blueprint.mjs"
   },
   "files": [
-    "implement-cli.mjs",
-    "LICENSE.txt",
-    "scripts/safehouse",
-    "scripts/electron-mach-fix.sb"
+    "blueprint.mjs",
+    "blueprint.mjs.map",
+    "scripts/"
   ],
-  "dependencies": {
-    "@github/copilot": "^0.0.403"
-  },
+  "keywords": [
+    "blueprint",
+    "copilot",
+    "code-generation",
+    "cli"
+  ],
+  "author": "",
+  "license": "MIT",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@github/copilot": "latest"
   }
 }

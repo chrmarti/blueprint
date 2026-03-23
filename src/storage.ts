@@ -1,99 +1,85 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
+// storage.ts - localStorage persistence layer for Blueprint Implementer
 
-const STORAGE_PREFIX = 'blueprint-implementer:';
+const STORAGE_KEYS = {
+  THEME: 'blueprint-theme',
+  FONT_SIZE: 'blueprint-font-size',
+  MODEL: 'blueprint-model',
+  HISTORY: 'blueprint-history',
+} as const;
 
-export interface ProjectState {
-  markdown: string;
-  implementedOutput: string;
-  settings: AppSettings;
-  history: ImplementationEntry[];
-}
-
-export interface AppSettings {
-  model: string;
-  temperature: number;
-  maxTokens: number;
-  fontSize: number;
-  theme: 'dark' | 'light';
-}
-
-export interface ImplementationEntry {
+export interface HistoryEntry {
   timestamp: number;
-  markdown: string;
+  model: string;
+  prompt: string;
   output: string;
 }
 
-const DEFAULT_SETTINGS: AppSettings = {
-  model: 'claude-opus-4.5',
-  temperature: 0,
-  maxTokens: 16000,
-  fontSize: 14,
-  theme: 'dark',
-};
-
-function get<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(STORAGE_PREFIX + key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch {
-    return fallback;
-  }
+export function getTheme(): 'light' | 'dark' {
+  return (localStorage.getItem(STORAGE_KEYS.THEME) as 'light' | 'dark') || 'light';
 }
 
-function set(key: string, value: unknown): void {
-  localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
+export function setTheme(theme: 'light' | 'dark'): void {
+  localStorage.setItem(STORAGE_KEYS.THEME, theme);
+  document.documentElement.setAttribute('data-theme', theme);
 }
 
-export function loadMarkdown(): string {
-  return get<string>('markdown', '');
+export function getFontSize(): number {
+  const size = localStorage.getItem(STORAGE_KEYS.FONT_SIZE);
+  return size ? parseInt(size, 10) : 14;
 }
 
-export function saveMarkdown(md: string): void {
-  set('markdown', md);
+export function setFontSize(size: number): void {
+  localStorage.setItem(STORAGE_KEYS.FONT_SIZE, String(size));
 }
 
-export function loadOutput(): string {
-  return get<string>('implementedOutput', '');
+export function getSelectedModel(): string {
+  return localStorage.getItem(STORAGE_KEYS.MODEL) || 'claude-opus-4.6-1m';
 }
 
-export function saveOutput(output: string): void {
-  set('implementedOutput', output);
+export function setSelectedModel(model: string): void {
+  localStorage.setItem(STORAGE_KEYS.MODEL, model);
 }
 
-export function loadSettings(): AppSettings {
-  return { ...DEFAULT_SETTINGS, ...get<Partial<AppSettings>>('settings', {}) };
+export function getHistory(): HistoryEntry[] {
+  const data = localStorage.getItem(STORAGE_KEYS.HISTORY);
+  return data ? JSON.parse(data) : [];
 }
 
-export function saveSettings(s: AppSettings): void {
-  set('settings', s);
-}
-
-export function loadHistory(): ImplementationEntry[] {
-  return get<ImplementationEntry[]>('history', []);
-}
-
-export function pushHistory(entry: ImplementationEntry): void {
-  const history = loadHistory();
+export function addToHistory(entry: HistoryEntry): void {
+  const history = getHistory();
   history.unshift(entry);
-  if (history.length > 50) history.length = 50; // cap at 50
-  set('history', history);
+  // Keep only last 50 entries
+  if (history.length > 50) {
+    history.length = 50;
+  }
+  localStorage.setItem(STORAGE_KEYS.HISTORY, JSON.stringify(history));
 }
 
-export function exportProject(): ProjectState {
+export function clearHistory(): void {
+  localStorage.removeItem(STORAGE_KEYS.HISTORY);
+}
+
+export interface ExportedState {
+  theme: 'light' | 'dark';
+  fontSize: number;
+  model: string;
+  history: HistoryEntry[];
+}
+
+export function exportState(): ExportedState {
   return {
-    markdown: loadMarkdown(),
-    implementedOutput: loadOutput(),
-    settings: loadSettings(),
-    history: loadHistory(),
+    theme: getTheme(),
+    fontSize: getFontSize(),
+    model: getSelectedModel(),
+    history: getHistory(),
   };
 }
 
-export function importProject(state: ProjectState): void {
-  saveMarkdown(state.markdown);
-  saveOutput(state.implementedOutput);
-  saveSettings(state.settings);
-  set('history', state.history);
+export function importState(state: ExportedState): void {
+  if (state.theme) setTheme(state.theme);
+  if (state.fontSize) setFontSize(state.fontSize);
+  if (state.model) setSelectedModel(state.model);
+  if (state.history) {
+    localStorage.setItem(STORAGE_KEYS.HISTORY, JSON.stringify(state.history));
+  }
 }

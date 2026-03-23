@@ -1,101 +1,95 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
+// build.mjs - esbuild bundler for Blueprint Implementer
 import * as esbuild from 'esbuild';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const distDir = path.resolve('dist');
-if (!fs.existsSync(distDir)) fs.mkdirSync(distDir, { recursive: true });
+const distDir = 'dist';
+const cliDir = 'cli';
 
-// Bundle client (renderer) TypeScript
+// Ensure output directories exist
+if (!fs.existsSync(distDir)) fs.mkdirSync(distDir, { recursive: true });
+if (!fs.existsSync(cliDir)) fs.mkdirSync(cliDir, { recursive: true });
+
+// Bundle renderer (IIFE for browser)
 await esbuild.build({
   entryPoints: ['src/main.ts'],
   bundle: true,
-  outfile: 'dist/app.js',
   format: 'iife',
-  sourcemap: true,
   target: 'es2020',
-  minify: false,
+  outfile: 'dist/app.js',
+  platform: 'browser',
+  sourcemap: true,
+  external: [],
 });
 
-// Bundle Electron main process
+// Bundle Electron main process (CJS)
 await esbuild.build({
   entryPoints: ['src/electron.ts'],
   bundle: true,
-  outfile: 'dist/electron.cjs',
   format: 'cjs',
-  platform: 'node',
   target: 'node22',
+  outfile: 'dist/electron.cjs',
+  platform: 'node',
   sourcemap: true,
-  minify: false,
   external: ['electron', 'node-pty'],
 });
 
-// Bundle preload script
+// Bundle preload script (CJS)
 await esbuild.build({
   entryPoints: ['src/preload.ts'],
   bundle: true,
-  outfile: 'dist/preload.cjs',
   format: 'cjs',
-  platform: 'node',
   target: 'node22',
+  outfile: 'dist/preload.cjs',
+  platform: 'node',
   sourcemap: true,
-  minify: false,
   external: ['electron'],
 });
 
-// When bundling CJS dependencies (like vscode-jsonrpc) into ESM, esbuild
-// emits `require()` calls for Node builtins. Inject a shim via banner.
-const esmRequireShim = `
-import { createRequire as __createRequire } from 'node:module';
-const require = __createRequire(import.meta.url);
-`;
-
-// Bundle CLI implement tool
+// Bundle CLI implement tool (ESM with createRequire shim)
 await esbuild.build({
   entryPoints: ['src/implement-cli.ts'],
   bundle: true,
-  outfile: 'dist/implement-cli.mjs',
   format: 'esm',
-  platform: 'node',
   target: 'node22',
+  outfile: 'cli/blueprint.mjs',
+  platform: 'node',
   sourcemap: true,
-  minify: false,
-  banner: { js: esmRequireShim },
+  external: ['node-pty'],
+  banner: {
+    js: `import { createRequire as __banner_createRequire } from 'module'; const require = __banner_createRequire(import.meta.url);`,
+  },
 });
 
-// Bundle CLI for npm package (with shebang)
-await esbuild.build({
-  entryPoints: ['src/implement-cli.ts'],
-  bundle: true,
-  outfile: 'cli/implement-cli.mjs',
-  format: 'esm',
-  platform: 'node',
-  target: 'node22',
-  sourcemap: false,
-  minify: false,
-  banner: { js: '#!/usr/bin/env node\n' + esmRequireShim },
-});
-
-// Copy HTML
+// Copy index.html to dist
 fs.copyFileSync('src/index.html', 'dist/index.html');
 
-// Copy LICENSE to CLI package
-fs.copyFileSync('LICENSE.txt', 'cli/LICENSE.txt');
+// Copy xterm.css to dist
+const xtermCssPath = 'node_modules/@xterm/xterm/css/xterm.css';
+if (fs.existsSync(xtermCssPath)) {
+  fs.copyFileSync(xtermCssPath, 'dist/xterm.css');
+}
 
-// Copy safehouse to CLI package
-fs.mkdirSync('cli/scripts', { recursive: true });
-fs.copyFileSync('scripts/safehouse', 'cli/scripts/safehouse');
-fs.chmodSync('cli/scripts/safehouse', 0o755);
-fs.copyFileSync('scripts/electron-mach-fix.sb', 'cli/scripts/electron-mach-fix.sb');
+// Copy blueprint/main.md to dist for reference
+if (fs.existsSync('blueprint/main.md')) {
+  fs.copyFileSync('blueprint/main.md', 'dist/main.md');
+}
 
-// Copy xterm.js CSS
-fs.copyFileSync('node_modules/@xterm/xterm/css/xterm.css', 'dist/xterm.css');
+// Copy safehouse script to cli
+const safehousePath = 'scripts/safehouse';
+if (fs.existsSync(safehousePath)) {
+  const cliScriptsDir = path.join(cliDir, 'scripts');
+  if (!fs.existsSync(cliScriptsDir)) fs.mkdirSync(cliScriptsDir, { recursive: true });
+  fs.copyFileSync(safehousePath, path.join(cliScriptsDir, 'safehouse'));
+  fs.chmodSync(path.join(cliScriptsDir, 'safehouse'), 0o755);
+}
 
-// Copy blueprint into dist so the app can load it
-fs.copyFileSync('blueprint/main.md', 'dist/main.md');
+// Copy electron-safehouse-extra.sb to cli
+const extraProfilePath = 'scripts/electron-safehouse-extra.sb';
+if (fs.existsSync(extraProfilePath)) {
+  const cliScriptsDir = path.join(cliDir, 'scripts');
+  if (!fs.existsSync(cliScriptsDir)) fs.mkdirSync(cliScriptsDir, { recursive: true });
+  fs.copyFileSync(extraProfilePath, path.join(cliScriptsDir, 'electron-safehouse-extra.sb'));
+}
 
-console.log('Build complete → dist/');
+console.log('Build complete.');

@@ -1,658 +1,994 @@
 <!DOCTYPE html>
-<!--
- Copyright (c) Microsoft Corporation. All rights reserved.
- Licensed under the MIT License. See License.txt in the project root for license information.
--->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https: http: ws: wss:; frame-src *;">
   <title>Blueprint Implementer</title>
   <link rel="stylesheet" href="xterm.css">
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --bg: #1e1e2e;
-      --bg-surface: #252536;
-      --bg-elevated: #2d2d44;
-      --border: #3e3e5e;
-      --text: #cdd6f4;
-      --text-muted: #888caa;
-      --accent: #89b4fa;
-      --accent-hover: #a6c8ff;
-      --error: #f38ba8;
-      --success: #a6e3a1;
-      --warning: #fab387;
-      --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
-      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      --toolbar-h: 48px;
+      /* Light theme (default) */
+      --bg-base: #ffffff;
+      --bg-surface: #f5f5f5;
+      --bg-elevated: #e8e8e8;
+      --bg-hover: #e0e0e0;
+      --text: #1a1a1a;
+      --text-muted: #666666;
+      --text-dimmed: #999999;
+      --border: #d0d0d0;
+      --accent: #0066cc;
+      --accent-hover: #0052a3;
+      --success: #28a745;
+      --warning: #f0ad4e;
+      --error: #dc3545;
+      --toolbar-bg: #f8f8f8;
+      --panel-bg: #ffffff;
+      --input-bg: #ffffff;
+      --scrollbar-thumb: #c0c0c0;
+      --scrollbar-track: #f0f0f0;
     }
 
-    :root.light {
-      --bg: #eff1f5;
-      --bg-surface: #ffffff;
-      --bg-elevated: #e6e9ef;
-      --border: #ccd0da;
-      --text: #4c4f69;
-      --text-muted: #7c7f93;
-      --accent: #1e66f5;
-      --accent-hover: #2a7aff;
-      --error: #d20f39;
-      --success: #40a02b;
-      --warning: #df8e1d;
+    [data-theme="dark"] {
+      --bg-base: #1e1e1e;
+      --bg-surface: #252526;
+      --bg-elevated: #2d2d2d;
+      --bg-hover: #3c3c3c;
+      --text: #e0e0e0;
+      --text-muted: #a0a0a0;
+      --text-dimmed: #707070;
+      --border: #404040;
+      --accent: #4da6ff;
+      --accent-hover: #66b3ff;
+      --success: #4caf50;
+      --warning: #ff9800;
+      --error: #f44336;
+      --toolbar-bg: #2d2d30;
+      --panel-bg: #1e1e1e;
+      --input-bg: #3c3c3c;
+      --scrollbar-thumb: #555555;
+      --scrollbar-track: #2d2d2d;
     }
 
-    html, body { height: 100%; font-family: var(--font-sans); background: var(--bg); color: var(--text); }
-
-    /* Toolbar */
-    #toolbar {
-      height: var(--toolbar-h);
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 0 16px;
-      background: var(--bg-surface);
-      border-bottom: 1px solid var(--border);
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
     }
-    #toolbar h1 { font-size: 16px; font-weight: 600; margin-right: auto; }
-    #toolbar button, #toolbar select {
-      padding: 6px 14px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background: var(--bg-elevated);
+
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      font-size: 14px;
       color: var(--text);
-      cursor: pointer;
-      font-size: 13px;
-      transition: background 0.15s;
-    }
-    #toolbar button:hover { background: var(--accent); color: #fff; }
-    #toolbar .implement-btn { background: var(--accent); color: #fff; font-weight: 600; }
-    #toolbar .implement-btn:hover { background: var(--accent-hover); }
-
-    /* Panels container */
-    #panels {
-      display: flex;
-      height: calc(100vh - var(--toolbar-h));
+      background: var(--bg-base);
       overflow: hidden;
     }
 
+    /* Scrollbar styling */
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: var(--scrollbar-track);
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--scrollbar-thumb);
+      border-radius: 5px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--text-muted);
+    }
+
+    /* Layout */
+    .app-container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* Toolbar */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      background: var(--toolbar-bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .toolbar-title {
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--text);
+    }
+
+    .toolbar-separator {
+      width: 1px;
+      height: 20px;
+      background: var(--border);
+    }
+
+    .toolbar-folder {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .toolbar-folder-name {
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    .toolbar-spacer {
+      flex: 1;
+    }
+
+    .toolbar-button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .toolbar-button:hover {
+      background: var(--bg-hover);
+      border-color: var(--text-muted);
+    }
+
+    .toolbar-button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    .toolbar-button.primary:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+
+    .toolbar-button.danger {
+      color: var(--error);
+    }
+
+    .toolbar-button.danger:hover {
+      background: var(--error);
+      color: white;
+      border-color: var(--error);
+    }
+
+    .toolbar-button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .user-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+    }
+
+    .user-login {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    /* Main content area */
+    .main-content {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* Panels */
     .panel {
       display: flex;
       flex-direction: column;
-      min-width: 80px;
-      position: relative;
-      background: var(--bg-surface);
+      background: var(--panel-bg);
+      border-right: 1px solid var(--border);
+      overflow: hidden;
     }
+
+    .panel:last-child {
+      border-right: none;
+    }
+
     .panel-header {
+      display: flex;
+      align-items: center;
+      padding: 8px 12px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .panel-title {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text);
+    }
+
+    .panel-body {
+      flex: 1;
+      overflow: auto;
+    }
+
+    /* Sidebar */
+    #sidebar {
+      width: 260px;
+      min-width: 180px;
+    }
+
+    .sidebar-tabs {
+      display: flex;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar-tab {
+      flex: 1;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      text-align: center;
+      color: var(--text-muted);
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .sidebar-tab:hover {
+      color: var(--text);
+    }
+
+    .sidebar-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    .sidebar-actions {
+      display: flex;
+      gap: 4px;
+      margin-left: auto;
+      padding-right: 4px;
+    }
+
+    .sidebar-action {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: var(--text-muted);
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .sidebar-action:hover {
+      background: var(--bg-hover);
+      color: var(--text);
+    }
+
+    .sidebar-content {
+      flex: 1;
+      overflow: auto;
+    }
+
+    /* File tree */
+    .file-tree {
+      padding: 8px 0;
+    }
+
+    .file-entry {
+      display: flex;
+      align-items: center;
+      padding: 4px 12px;
+      cursor: pointer;
+      color: var(--text);
+      font-size: 13px;
+      transition: background 0.1s;
+    }
+
+    .file-entry:hover {
+      background: var(--bg-hover);
+    }
+
+    .file-entry.selected {
+      background: var(--accent);
+      color: white;
+    }
+
+    .file-entry.directory-selected {
+      background: var(--bg-elevated);
+    }
+
+    .file-entry-icon {
+      width: 20px;
+      text-align: center;
+      margin-right: 6px;
+      flex-shrink: 0;
+    }
+
+    .file-entry-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-entry-arrow {
+      width: 16px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 10px;
+    }
+
+    .file-children {
+      padding-left: 16px;
+    }
+
+    .inline-input {
+      flex: 1;
+      padding: 2px 6px;
+      font-size: 13px;
+      font-family: inherit;
+      background: var(--input-bg);
+      border: 1px solid var(--accent);
+      border-radius: 3px;
+      color: var(--text);
+      outline: none;
+    }
+
+    /* Git status */
+    .git-status-list {
+      padding: 8px 0;
+    }
+
+    .git-entry {
+      display: flex;
+      align-items: center;
+      padding: 4px 12px;
+      font-size: 13px;
+    }
+
+    .git-status-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      margin-right: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      border-radius: 3px;
+    }
+
+    .git-status-badge.modified { background: var(--warning); color: #1a1a1a; }
+    .git-status-badge.added { background: var(--success); color: white; }
+    .git-status-badge.deleted { background: var(--error); color: white; }
+    .git-status-badge.untracked { background: var(--text-dimmed); color: white; }
+    .git-status-badge.renamed { background: var(--warning); color: #1a1a1a; }
+
+    .git-file-path {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-muted);
+    }
+
+    .empty-state {
+      padding: 24px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    /* Editor panel */
+    #editor-panel {
+      flex: 1;
+      min-width: 300px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .editor-tabs {
+      display: flex;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .editor-tab {
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .editor-tab:hover {
+      color: var(--text);
+    }
+
+    .editor-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    .editor-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .tab-content {
+      display: none;
+      flex: 1;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .tab-content.active {
+      display: flex;
+    }
+
+    /* Editor textarea */
+    #editor-textarea {
+      flex: 1;
+      padding: 16px;
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text);
+      background: var(--panel-bg);
+      border: none;
+      outline: none;
+      resize: none;
+      overflow: auto;
+    }
+
+    /* Browser tab */
+    .browser-container {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .browser-address-bar {
       display: flex;
       align-items: center;
       gap: 8px;
       padding: 8px 12px;
-      background: var(--bg-elevated);
+      background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
-      font-size: 12px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--text-muted);
     }
-    .panel-header button {
-      margin-left: auto;
-      background: none;
-      border: none;
-      color: var(--text-muted);
+
+    .browser-address-input {
+      flex: 1;
+      padding: 6px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      outline: none;
+    }
+
+    .browser-address-input:focus {
+      border-color: var(--accent);
+    }
+
+    .browser-go-button {
+      padding: 6px 12px;
+      font-size: 13px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
       cursor: pointer;
-      font-size: 14px;
     }
-    .panel-body { flex: 1; overflow: auto; min-height: 0; }
+
+    .browser-go-button:hover {
+      background: var(--bg-hover);
+    }
+
+    #browser-iframe {
+      flex: 1;
+      width: 100%;
+      border: none;
+      background: white;
+    }
+
+    /* Terminal panel */
+    .terminal-container {
+      height: 200px;
+      min-height: 60px;
+      display: flex;
+      flex-direction: column;
+      border-top: 1px solid var(--border);
+    }
+
+    .terminal-header {
+      display: flex;
+      align-items: center;
+      padding: 4px 12px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .terminal-title {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    .terminal-body {
+      flex: 1;
+      overflow: hidden;
+    }
+
+    #terminal {
+      height: 100%;
+    }
+
+    /* Output panel */
+    #output-panel {
+      width: 400px;
+      min-width: 280px;
+      border-left: 1px solid var(--border);
+      border-right: none;
+    }
+
+    .output-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .output-title {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text);
+    }
+
+    .output-status {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-left: auto;
+    }
+
+    .output-status.success {
+      color: var(--success);
+    }
+
+    .output-status.error {
+      color: var(--error);
+    }
+
+    .output-status.running {
+      color: var(--warning);
+    }
+
+    .output-controls {
+      display: flex;
+      gap: 8px;
+      padding: 8px 12px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .output-controls select,
+    .output-controls input {
+      padding: 4px 8px;
+      font-size: 12px;
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+    }
+
+    .output-controls select {
+      min-width: 160px;
+    }
+
+    .output-controls label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .output-terminal {
+      flex: 1;
+      overflow: hidden;
+    }
+
+    #output-terminal {
+      height: 100%;
+    }
+
+    .output-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .output-action {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: var(--text-muted);
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .output-action:hover {
+      background: var(--bg-hover);
+      color: var(--text);
+    }
 
     /* Drag handles */
     .drag-handle {
       width: 5px;
       cursor: col-resize;
-      background: var(--border);
-      flex-shrink: 0;
+      background: transparent;
       transition: background 0.15s;
-    }
-    .drag-handle:hover, .drag-handle.active { background: var(--accent); }
-
-    /* Editor */
-    #editor-area {
-      flex: 1;
-      width: 100%;
-      height: 100%;
-      resize: none;
-      border: none;
-      outline: none;
-      padding: 16px;
-      font-family: var(--font-mono);
-      font-size: 14px;
-      line-height: 1.6;
-      background: var(--bg-surface);
-      color: var(--text);
-      tab-size: 2;
-      min-width: 0;
-    }
-
-    /* Sidebar (files + outline) */
-    #sidebar {
-      width: 220px;
-      min-width: 120px;
-      border-right: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
       flex-shrink: 0;
     }
-    .sidebar-tabs {
-      display: flex;
-      background: var(--bg-elevated);
-      border-bottom: 1px solid var(--border);
-    }
-    .sidebar-tabs button {
-      flex: 1;
-      padding: 6px 8px;
-      background: none;
-      border: none;
-      border-bottom: 2px solid transparent;
-      color: var(--text-muted);
-      cursor: pointer;
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .sidebar-tabs button.active { border-bottom-color: var(--accent); color: var(--text); }
-    .sidebar-actions { margin-left: auto; display: flex; gap: 2px; align-items: center; }
-    .sidebar-actions button {
-      padding: 2px 6px;
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      font-size: 13px;
-      border-radius: 4px;
-    }
-    .sidebar-actions button:hover { background: var(--bg-elevated); color: var(--text); }
 
-    /* File tree */
-    #file-tree {
-      flex: 1;
-      overflow-y: auto;
-      padding: 4px 0;
-      font-size: 12px;
-    }
-    .file-entry {
-      padding: 4px 8px;
-      cursor: pointer;
-      border-radius: 4px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin: 0 4px;
-    }
-    .file-entry:hover { background: var(--bg-elevated); }
-    .file-entry.active { background: var(--accent); color: #fff; }
-    .file-entry.directory { font-weight: 600; }
-    .file-icon { flex-shrink: 0; width: 16px; text-align: center; font-size: 11px; }
-    .file-name { overflow: hidden; text-overflow: ellipsis; }
-
-    /* Inline rename/create input */
-    .file-entry input.inline-input {
-      border: 1px solid var(--accent);
-      background: var(--bg-elevated);
-      color: var(--text);
-      font-size: 12px;
-      font-family: var(--font-sans);
-      outline: none;
-      padding: 1px 4px;
-      border-radius: 3px;
-      width: 100%;
+    .drag-handle:hover,
+    .drag-handle.dragging {
+      background: var(--accent);
     }
 
-    /* Git status */
-    #git-status {
-      flex: 1;
-      overflow-y: auto;
-      padding: 4px 0;
-      font-size: 12px;
-    }
-    .git-entry {
-      padding: 4px 8px;
-      margin: 0 4px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      cursor: default;
-    }
-    .git-entry:hover { background: var(--bg-elevated); }
-    .git-badge {
-      font-size: 10px;
-      font-weight: 700;
-      font-family: var(--font-mono);
-      width: 16px;
-      text-align: center;
-      flex-shrink: 0;
-    }
-    .git-modified { color: var(--warning); }
-    .git-added { color: var(--success); }
-    .git-deleted { color: var(--error); }
-    .git-untracked { color: var(--text-muted); }
-    .git-empty {
-      padding: 16px 12px;
-      color: var(--text-muted);
-      font-size: 12px;
-      text-align: center;
-    }
-
-    /* Folder name in toolbar */
-    #folder-name {
-      font-size: 13px;
-      color: var(--text-muted);
-      max-width: 200px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    /* Implementation output (xterm container) */
-    #implement-output {
-      width: 100%;
-      height: 100%;
-      background: var(--bg-surface);
-    }
-    #implement-output .xterm {
-      padding: 8px;
-    }
-
-    /* Implement status */
-    #implement-status {
-      padding: 6px 12px;
-      border-top: 1px solid var(--border);
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-    #implement-status.error { color: var(--error); }
-    #implement-status.success { color: var(--success); }
-
-    /* Preview */
-    #preview-address-bar {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 8px;
-      background: var(--bg-elevated);
-      border-bottom: 1px solid var(--border);
-    }
-    #preview-address-bar input {
-      flex: 1;
-      padding: 4px 8px;
-      font-family: var(--font-mono);
-      font-size: 12px;
-      background: var(--bg-surface);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      outline: none;
-    }
-    #preview-address-bar input:focus {
-      border-color: var(--accent);
-    }
-    #preview-address-bar button {
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      font-size: 14px;
-      padding: 2px 4px;
-      border-radius: 4px;
-    }
-    #preview-address-bar button:hover {
-      color: var(--text);
-      background: var(--bg-surface);
-    }
-    #preview-frame {
-      width: 100%;
-      height: 100%;
-      border: none;
-      background: #fff;
-    }
-
-    /* Console log */
-    #console-log {
-      max-height: 150px;
-      overflow-y: auto;
-      padding: 8px 12px;
-      border-top: 1px solid var(--border);
-      font-family: var(--font-mono);
-      font-size: 12px;
-      background: var(--bg-elevated);
-    }
-    #console-log .log-entry { padding: 2px 0; }
-    #console-log .log-warn { color: var(--warning); }
-    #console-log .log-error { color: var(--error); }
-
-    /* Settings Modal */
-    .modal-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.5);
-      z-index: 100;
-      justify-content: center;
-      align-items: center;
-    }
-    .modal-overlay.open { display: flex; }
-    .modal {
-      background: var(--bg-surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 24px;
-      width: 480px;
-      max-height: 80vh;
-      overflow-y: auto;
-    }
-    .modal h2 { margin-bottom: 16px; font-size: 18px; }
-    .modal label { display: block; margin-bottom: 12px; font-size: 13px; }
-    .modal label span { display: block; margin-bottom: 4px; color: var(--text-muted); }
-    .modal input, .modal select {
-      width: 100%;
-      padding: 8px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background: var(--bg-elevated);
-      color: var(--text);
-      font-size: 13px;
-      font-family: var(--font-mono);
-    }
-    .modal .warn { color: var(--warning); font-size: 11px; margin-top: 2px; }
-    .modal .btn-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-    .modal button {
-      padding: 8px 16px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background: var(--bg-elevated);
-      color: var(--text);
-      cursor: pointer;
-      font-size: 13px;
-    }
-    .modal button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-
-    /* History drawer */
-    #history-drawer {
-      display: none;
-      position: absolute;
-      top: 0;
-      right: 0;
-      width: 280px;
-      height: 100%;
-      background: var(--bg-surface);
-      border-left: 1px solid var(--border);
-      z-index: 50;
-      flex-direction: column;
-    }
-    #history-drawer.open { display: flex; }
-    #history-drawer .drawer-header {
-      padding: 12px;
-      border-bottom: 1px solid var(--border);
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-    }
-    #history-drawer .drawer-header button { margin-left: auto; background: none; border: none; color: var(--text-muted); cursor: pointer; }
-    #history-list { flex: 1; overflow-y: auto; padding: 8px; }
-    .history-item {
-      padding: 8px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 12px;
-      margin-bottom: 4px;
-    }
-    .history-item:hover { background: var(--bg-elevated); }
-    .history-item .timestamp { color: var(--text-muted); }
-
-    /* Viewport control */
-    #viewport-controls {
-      display: flex;
-      gap: 4px;
-      padding: 4px 8px;
-      background: var(--bg-elevated);
-      border-bottom: 1px solid var(--border);
-    }
-    #viewport-controls button {
-      padding: 4px 10px;
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      background: var(--bg-surface);
-      color: var(--text-muted);
-      cursor: pointer;
-      font-size: 11px;
-    }
-    #viewport-controls button.active { border-color: var(--accent); color: var(--accent); }
-
-    /* Browser view (inline in editor panel) */
-    #browser-view {
-      flex: 1;
-      display: none;
-      flex-direction: column;
-      overflow: hidden;
-      min-width: 0;
-      min-height: 0;
-    }
-    .browser-frame-container {
-      flex: 1;
-      overflow: hidden;
-      min-height: 0;
-    }
-
-    /* Terminal panel */
-    #terminal-panel {
-      height: 200px;
-      min-height: 60px;
-      border-top: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      flex-shrink: 0;
-    }
-    #terminal-panel .panel-header {
-      padding: 4px 12px;
-    }
-    #terminal-container {
-      flex: 1;
-      min-height: 0;
-      overflow: hidden;
-    }
-    #terminal-container .xterm {
-      padding: 4px;
-    }
     .drag-handle-h {
       height: 5px;
       cursor: row-resize;
-      background: var(--border);
-      flex-shrink: 0;
+      background: transparent;
       transition: background 0.15s;
+      flex-shrink: 0;
     }
-    .drag-handle-h:hover, .drag-handle-h.active { background: var(--accent); }
 
-    /* Preview/Edit tabs */
-    .editor-tabs {
+    .drag-handle-h:hover,
+    .drag-handle-h.dragging {
+      background: var(--accent);
+    }
+
+    /* Settings modal */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
       display: flex;
-      gap: 0;
-      background: var(--bg-elevated);
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .modal-overlay.hidden {
+      display: none;
+    }
+
+    .modal {
+      width: 480px;
+      max-height: 80vh;
+      background: var(--panel-bg);
+      border-radius: 8px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      padding: 12px 16px;
+      background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
     }
-    .editor-tabs button {
-      padding: 6px 16px;
-      background: none;
-      border: none;
-      border-bottom: 2px solid transparent;
-      color: var(--text-muted);
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .editor-tabs button.active { border-bottom-color: var(--accent); color: var(--text); }
 
-    /* Auth styles */
-    .auth-section {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 16px;
-      margin-bottom: 16px;
+    .modal-title {
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--text);
     }
-    .auth-section h3 { margin-bottom: 12px; font-size: 14px; }
-    .auth-user { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-    .auth-user img { width: 32px; height: 32px; border-radius: 50%; }
-    .auth-user span { font-weight: 600; }
-    #toolbar-avatar {
-      width: 24px;
-      height: 24px;
-      border-radius: 50%;
-      display: none;
-      vertical-align: middle;
-    }
-    #toolbar-user {
-      display: none;
-      font-size: 13px;
+
+    .modal-close {
+      margin-left: auto;
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
       color: var(--text-muted);
+      font-size: 18px;
+      cursor: pointer;
+    }
+
+    .modal-close:hover {
+      background: var(--bg-hover);
+      color: var(--text);
+    }
+
+    .modal-body {
+      padding: 16px;
+      overflow-y: auto;
+    }
+
+    .settings-section {
+      margin-bottom: 20px;
+    }
+
+    .settings-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .settings-label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .settings-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .settings-input {
+      flex: 1;
+      padding: 8px 12px;
+      font-size: 13px;
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+    }
+
+    .settings-select {
+      padding: 8px 12px;
+      font-size: 13px;
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      min-width: 200px;
+    }
+
+    .settings-button {
+      padding: 8px 16px;
+      font-size: 13px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .settings-button:hover {
+      background: var(--bg-hover);
+    }
+
+    .settings-button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    .settings-button.primary:hover {
+      background: var(--accent-hover);
+    }
+
+    /* Collapsed panels */
+    .panel.collapsed {
+      width: 32px !important;
+      min-width: 32px !important;
+    }
+
+    .panel.collapsed .panel-body,
+    .panel.collapsed .sidebar-content,
+    .panel.collapsed .editor-content,
+    .panel.collapsed .output-terminal,
+    .panel.collapsed .output-controls {
+      display: none;
+    }
+
+    .panel.collapsed .panel-header,
+    .panel.collapsed .sidebar-tabs,
+    .panel.collapsed .editor-tabs,
+    .panel.collapsed .output-header {
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      padding: 12px 8px;
+      justify-content: center;
     }
   </style>
 </head>
 <body>
-  <!-- Toolbar -->
-  <div id="toolbar">
-    <h1>Blueprint Implementer</h1>
-    <button id="open-folder-btn" title="Open Folder (Cmd+Shift+O)">&#128193; Open Folder</button>
-    <span id="folder-name"></span>
-    <button class="implement-btn" id="implement-btn" title="Cmd/Ctrl+B">&#9654; Implement</button>
-    <button id="clean-btn" title="Remove non-blueprint files">&#128465; Clean</button>
-    <img id="toolbar-avatar" src="" alt="avatar">
-    <span id="toolbar-user"></span>
-    <button id="theme-toggle" title="Toggle theme">&#9681;</button>
-    <button id="settings-btn" title="Settings">&#9881;</button>
-  </div>
-
-  <!-- Main panels -->
-  <div id="panels">
-    <!-- Editor Panel -->
-    <div class="panel" id="editor-panel" style="flex: 3;">
-      <div class="panel-header">
-        <span>Editor</span>
-        <div class="editor-tabs" style="margin-left: auto;">
-          <button class="active" id="tab-edit">Edit</button>
-          <button id="tab-browser">Browser</button>
-        </div>
+  <div class="app-container">
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <span class="toolbar-title">Blueprint Implementer</span>
+      <div class="toolbar-separator"></div>
+      <button class="toolbar-button" id="open-folder-btn" title="Open Folder (Cmd+Shift+O)">📂 Open</button>
+      <div class="toolbar-folder" id="folder-display">
+        <span>No folder open</span>
       </div>
-      <div class="panel-body" style="display: flex; flex-direction: column; min-height: 0;">
-        <div style="display: flex; flex: 1; min-height: 0;">
-          <div id="sidebar">
-            <div class="sidebar-tabs">
-              <button class="active" id="sidebar-files">Files</button>
-              <button id="sidebar-git">Git</button>
-              <span class="sidebar-actions">
-                <button id="new-file-btn" title="New File">&#128196;</button>
-                <button id="new-folder-btn" title="New Folder">&#128193;</button>
-                <button id="refresh-btn" title="Refresh">&#128260;</button>
-                <button id="delete-btn" title="Delete">&#128465;</button>
-              </span>
-            </div>
-            <div id="file-tree"></div>
-            <div id="git-status" style="display: none;"></div>
-          </div>
-          <textarea id="editor-area" spellcheck="false" placeholder="Open a folder and select a file to start editing..."></textarea>
-          <div id="browser-view" style="display: none;">
-            <div id="viewport-controls">
-              <button class="active" data-width="100%">Desktop</button>
-              <button data-width="768px">Tablet</button>
-              <button data-width="375px">Mobile</button>
-            </div>
-            <div id="preview-address-bar">
-              <input id="preview-url" type="text" placeholder="Enter URL..." spellcheck="false" />
-              <button id="preview-refresh" title="Refresh">&#8635;</button>
-              <button id="preview-popout" title="Open in new tab">&#8599;</button>
-            </div>
-            <div class="browser-frame-container">
-              <iframe id="preview-frame" sandbox="allow-scripts allow-modals"></iframe>
-            </div>
-            <div id="console-log"></div>
-          </div>
-        </div>
-        <div class="drag-handle-h" id="terminal-drag-handle"></div>
-        <div id="terminal-panel">
-          <div class="panel-header">
-            <span>Terminal</span>
-          </div>
-          <div id="terminal-container"></div>
-        </div>
+      <div class="toolbar-spacer"></div>
+      <button class="toolbar-button primary" id="implement-btn" title="Implement (Cmd+B)">▶ Implement</button>
+      <button class="toolbar-button danger" id="clean-btn" title="Clean workspace">🗑 Clean</button>
+      <div class="toolbar-separator"></div>
+      <div class="user-info" id="user-info">
+        <span class="user-login">Not signed in</span>
       </div>
+      <button class="toolbar-button" id="settings-btn" title="Settings">⚙️</button>
     </div>
 
-    <div class="drag-handle" data-left="editor-panel" data-right="implement-panel"></div>
-
-    <!-- Output Panel -->
-    <div class="panel" id="implement-panel" style="flex: 1; position: relative;">
-      <div class="panel-header">
-        <span>Output</span>
-        <button id="save-output-btn" title="Save output to file">&#128190;</button>
-        <button id="history-btn" title="History">&#128337;</button>
-      </div>
-      <div class="panel-body">
-        <div id="implement-output"></div>
-      </div>
-      <div id="implement-status">Ready</div>
-      <!-- History drawer -->
-      <div id="history-drawer">
-        <div class="drawer-header">
-          <span>History</span>
-          <button id="history-close">&times;</button>
+    <!-- Main content -->
+    <div class="main-content">
+      <!-- Sidebar -->
+      <div class="panel" id="sidebar">
+        <div class="sidebar-tabs">
+          <button class="sidebar-tab active" data-tab="files">Files</button>
+          <button class="sidebar-tab" data-tab="git">Git</button>
+          <div class="sidebar-actions">
+            <button class="sidebar-action" id="new-file-btn" title="New File">📄</button>
+            <button class="sidebar-action" id="new-folder-btn" title="New Folder">📁</button>
+            <button class="sidebar-action" id="refresh-btn" title="Refresh">🔄</button>
+            <button class="sidebar-action" id="delete-btn" title="Delete">🗑️</button>
+          </div>
         </div>
-        <div id="history-list"></div>
+        <div class="sidebar-content">
+          <div class="tab-content active" data-tab="files">
+            <div class="file-tree" id="file-tree">
+              <div class="empty-state">No folder open</div>
+            </div>
+          </div>
+          <div class="tab-content" data-tab="git">
+            <div class="git-status-list" id="git-status">
+              <div class="empty-state">No changes</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="drag-handle" id="drag-handle-left"></div>
+
+      <!-- Editor panel -->
+      <div class="panel" id="editor-panel">
+        <div class="editor-tabs">
+          <button class="editor-tab active" data-tab="edit">Edit</button>
+          <button class="editor-tab" data-tab="browser">Browser</button>
+        </div>
+        <div class="editor-content">
+          <div class="tab-content active" data-tab="edit">
+            <textarea id="editor-textarea" placeholder="Open a file to edit..."></textarea>
+          </div>
+          <div class="tab-content" data-tab="browser">
+            <div class="browser-container">
+              <div class="browser-address-bar">
+                <input type="text" class="browser-address-input" id="browser-url" placeholder="Enter URL...">
+                <button class="browser-go-button" id="browser-go">Go</button>
+              </div>
+              <iframe id="browser-iframe" sandbox="allow-scripts allow-modals allow-same-origin allow-forms"></iframe>
+            </div>
+          </div>
+        </div>
+        <div class="drag-handle-h" id="drag-handle-terminal"></div>
+        <div class="terminal-container" id="terminal-container">
+          <div class="terminal-header">
+            <span class="terminal-title">Terminal</span>
+          </div>
+          <div class="terminal-body">
+            <div id="terminal"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="drag-handle" id="drag-handle-right"></div>
+
+      <!-- Output panel -->
+      <div class="panel" id="output-panel">
+        <div class="output-header">
+          <span class="output-title">Output</span>
+          <span class="output-status" id="implement-status"></span>
+          <div class="output-actions">
+            <button class="output-action" id="save-output-btn" title="Save Output">💾</button>
+            <button class="output-action" id="stop-btn" title="Stop">⏹</button>
+          </div>
+        </div>
+        <div class="output-controls">
+          <select id="model-select">
+            <option value="">Loading models...</option>
+          </select>
+        </div>
+        <div class="output-terminal">
+          <div id="output-terminal"></div>
+        </div>
       </div>
     </div>
   </div>
 
   <!-- Settings Modal -->
-  <div class="modal-overlay" id="settings-modal">
+  <div class="modal-overlay hidden" id="settings-modal">
     <div class="modal">
-      <h2>Settings</h2>
-
-      <!-- Auth section -->
-      <div class="auth-section">
-        <h3>GitHub Account</h3>
-        <p style="font-size: 13px; color: var(--text-muted);">Checking auth...</p>
+      <div class="modal-header">
+        <span class="modal-title">Settings</span>
+        <button class="modal-close" id="settings-close">×</button>
       </div>
-
-      <label>
-        <span>Model</span>
-        <select id="setting-model">
-          <option value="claude-opus-4.5">claude-opus-4.5</option>
-        </select>
-      </label>
-      <label>
-        <span>Temperature</span>
-        <input type="range" id="setting-temp" min="0" max="1" step="0.1" value="0">
-        <span id="temp-display">0</span>
-      </label>
-      <label>
-        <span>Max Tokens</span>
-        <input type="number" id="setting-max-tokens" value="16000">
-      </label>
-      <label>
-        <span>Font Size (px)</span>
-        <input type="number" id="setting-font-size" value="14" min="10" max="24">
-      </label>
-      <div class="btn-row">
-        <button id="export-project">Export Project</button>
-        <button id="import-project">Import Project</button>
-        <button class="primary" id="settings-save">Save</button>
+      <div class="modal-body">
+        <div class="settings-section">
+          <label class="settings-label">Theme</label>
+          <div class="settings-row">
+            <select class="settings-select" id="theme-select">
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-section">
+          <label class="settings-label">Editor Font Size</label>
+          <div class="settings-row">
+            <input type="number" class="settings-input" id="font-size-input" value="14" min="10" max="24">
+          </div>
+        </div>
+        <div class="settings-section">
+          <label class="settings-label">Export/Import</label>
+          <div class="settings-row">
+            <button class="settings-button" id="export-btn">Export State</button>
+            <button class="settings-button" id="import-btn">Import State</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>

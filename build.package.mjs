@@ -1,36 +1,63 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
-import { packager } from '@electron/packager';
+// build.package.mjs - Package Electron app for macOS
+import packager from '@electron/packager';
 import * as fs from 'fs';
 import * as path from 'path';
-import { glob } from 'node:fs/promises';
+import { execSync } from 'child_process';
 
-const appPaths = await packager({
-  dir: '.',
-  name: 'Blueprint',
-  platform: 'darwin',
-  arch: 'arm64',
-  out: 'release',
-  overwrite: true,
-  asar: false,
-  ignore: [/^\/(src|test|cli|blueprint|tsconfig|build\.mjs|build\.package\.mjs|playwright)/],
-});
+const appName = 'Blueprint';
+const outDir = 'release';
 
-// Fix executable bits lost during packaging
-for (const appPath of appPaths) {
-  const appBase = path.join(appPath, 'Blueprint.app', 'Contents', 'Resources', 'app');
-  for await (const entry of glob(path.join(appBase, 'node_modules/node-pty/prebuilds/darwin-*/spawn-helper'))) {
-    fs.chmodSync(entry, 0o755);
-    console.log(`Fixed executable bit: ${path.relative('.', entry)}`);
+async function packageApp() {
+  console.log('Packaging Electron app...');
+
+  const appPaths = await packager({
+    dir: '.',
+    name: appName,
+    out: outDir,
+    platform: 'darwin',
+    arch: 'arm64',
+    overwrite: true,
+    asar: false, // Keep files on disk for executable permissions
+    ignore: [
+      /^\/src/,
+      /^\/test/,
+      /^\/blueprint/,
+      /^\/\.git/,
+      /^\/\.gitignore/,
+      /^\/tsconfig\.json/,
+      /^\/build\.mjs/,
+      /^\/build\.package\.mjs/,
+      /^\/\.blueprintfiles/,
+      /^\/LICENSE\.txt/,
+      /^\/release/,
+    ],
+  });
+
+  console.log(`App packaged to: ${appPaths.join(', ')}`);
+
+  // Fix executable permissions on native binaries
+  const appPath = appPaths[0];
+  const resourcesPath = path.join(appPath, `${appName}.app`, 'Contents', 'Resources', 'app');
+
+  // Fix node-pty spawn-helper
+  const spawnHelperGlob = path.join(resourcesPath, 'node_modules', 'node-pty', 'prebuilds', 'darwin-*', 'spawn-helper');
+  try {
+    execSync(`chmod +x ${spawnHelperGlob}`, { stdio: 'inherit' });
+    console.log('Fixed node-pty spawn-helper permissions');
+  } catch {
+    console.log('node-pty spawn-helper not found or already executable');
   }
-  const copilotBin = path.join(appBase, 'node_modules/@github/copilot-darwin-arm64/copilot');
-  if (fs.existsSync(copilotBin)) {
-    fs.chmodSync(copilotBin, 0o755);
-    console.log(`Fixed executable bit: ${path.relative('.', copilotBin)}`);
+
+  // Fix copilot native binary
+  const copilotBinaryGlob = path.join(resourcesPath, 'node_modules', '@github', 'copilot-darwin-*', 'copilot');
+  try {
+    execSync(`chmod +x ${copilotBinaryGlob}`, { stdio: 'inherit' });
+    console.log('Fixed copilot binary permissions');
+  } catch {
+    console.log('copilot binary not found or already executable');
   }
+
+  console.log('Packaging complete.');
 }
 
-console.log(`Packaged → ${appPaths.join(', ')}`);
+packageApp().catch(console.error);

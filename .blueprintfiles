@@ -3,3 +3,4 @@ blueprint.md
 blueprint/
 .gitignore
 LICENSE.txt
+test/tictactoe/blueprint.md

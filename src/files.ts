@@ -1,411 +1,396 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
+// files.ts - Sidebar file browser (Files and Git tabs) for Blueprint Implementer
 
-// File browser module for navigating a local workspace folder.
+import { openFile, getCurrentFilePath, clearEditor } from './editor';
+
+let workspaceFolder: string | null = null;
+let selectedDirectory: string | null = null;
+let expandedDirs: Set<string> = new Set();
+let inlineInputEntry: { parentPath: string; type: 'file' | 'folder' } | null = null;
 
 interface DirEntry {
   name: string;
   isDirectory: boolean;
 }
 
-let fileTreeEl: HTMLElement;
-let gitStatusEl: HTMLElement;
-let filesTabBtn: HTMLButtonElement;
-let gitTabBtn: HTMLButtonElement;
+export async function initFiles(): Promise<void> {
+  // Setup sidebar tabs
+  const tabs = document.querySelectorAll('.sidebar-tab');
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const tabName = tab.getAttribute('data-tab');
+      if (tabName) {
+        switchSidebarTab(tabName);
+        if (tabName === 'git') {
+          refreshGitStatus();
+        }
+      }
+    });
+  });
 
-let workspaceFolder: string | null = null;
-let currentFilePath: string | null = null;
-let selectedDir: string | null = null;
-const expandedDirs = new Set<string>();
+  // Setup toolbar actions
+  document.getElementById('new-file-btn')?.addEventListener('click', showNewFileInput);
+  document.getElementById('new-folder-btn')?.addEventListener('click', showNewFolderInput);
+  document.getElementById('refresh-btn')?.addEventListener('click', refreshFileTree);
+  document.getElementById('delete-btn')?.addEventListener('click', deleteSelected);
 
-let onFileOpen: (filePath: string, content: string) => void = () => {};
+  // Get initial workspace folder
+  workspaceFolder = await window.electronAPI.getWorkspaceFolder();
+  updateFolderDisplay();
 
-export function initFileBrowser(opts: {
-  onFileOpen: (filePath: string, content: string) => void;
-}): void {
-  fileTreeEl = document.getElementById('file-tree') as HTMLElement;
-  gitStatusEl = document.getElementById('git-status') as HTMLElement;
-  filesTabBtn = document.getElementById('sidebar-files') as HTMLButtonElement;
-  gitTabBtn = document.getElementById('sidebar-git') as HTMLButtonElement;
+  if (workspaceFolder) {
+    await refreshFileTree();
+    expandedDirs.add(workspaceFolder);
+  }
 
-  onFileOpen = opts.onFileOpen;
+  // Listen for workspace changes
+  window.addEventListener('workspace-changed', async (e) => {
+    const event = e as CustomEvent<string>;
+    workspaceFolder = event.detail;
+    expandedDirs.clear();
+    if (workspaceFolder) {
+      expandedDirs.add(workspaceFolder);
+    }
+    updateFolderDisplay();
+    await refreshFileTree();
+  });
+}
 
-  filesTabBtn?.addEventListener('click', () => showSidebarTab('files'));
-  gitTabBtn?.addEventListener('click', () => showSidebarTab('git'));
+export function switchSidebarTab(tabName: string): void {
+  // Update tab buttons
+  document.querySelectorAll('.sidebar-tab').forEach((tab) => {
+    tab.classList.toggle('active', tab.getAttribute('data-tab') === tabName);
+  });
 
-  document.getElementById('new-file-btn')?.addEventListener('click', () => createNewEntry('file'));
-  document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewEntry('folder'));
-  document.getElementById('refresh-btn')?.addEventListener('click', () => refreshTree());
-  document.getElementById('delete-btn')?.addEventListener('click', () => deleteSelectedEntry());
+  // Update tab content
+  document.querySelectorAll('.sidebar-content .tab-content').forEach((content) => {
+    content.classList.toggle('active', content.getAttribute('data-tab') === tabName);
+  });
+}
 
-  if (window.electronAPI) {
-    window.electronAPI.onFolderOpened((folder) => openFolder(folder));
-    window.electronAPI.onMenuOpenFolder(() => promptOpenFolder());
+function updateFolderDisplay(): void {
+  const display = document.getElementById('folder-display');
+  if (display) {
+    if (workspaceFolder) {
+      const folderName = workspaceFolder.split('/').pop() || workspaceFolder;
+      display.innerHTML = `<span class="toolbar-folder-name">${folderName}</span>`;
+    } else {
+      display.innerHTML = '<span>No folder open</span>';
+    }
   }
 }
 
-function showSidebarTab(tab: 'files' | 'git'): void {
-  if (tab === 'files') {
-    fileTreeEl.style.display = '';
-    gitStatusEl.style.display = 'none';
-    filesTabBtn.classList.add('active');
-    gitTabBtn.classList.remove('active');
-  } else {
-    fileTreeEl.style.display = 'none';
-    gitStatusEl.style.display = '';
-    gitTabBtn.classList.add('active');
-    filesTabBtn.classList.remove('active');
-    refreshGitStatus();
-  }
-}
+export async function refreshFileTree(): Promise<void> {
+  const fileTree = document.getElementById('file-tree');
+  if (!fileTree) return;
 
-export async function refreshGitStatus(): Promise<void> {
-  if (!window.electronAPI?.gitStatus) return;
-  const entries: { status: string; file: string }[] = await window.electronAPI.gitStatus();
-  gitStatusEl.innerHTML = '';
-  if (entries.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'git-empty';
-    empty.textContent = 'No changes';
-    gitStatusEl.appendChild(empty);
+  if (!workspaceFolder) {
+    fileTree.innerHTML = '<div class="empty-state">No folder open</div>';
     return;
   }
-  for (const entry of entries) {
-    const div = document.createElement('div');
-    div.className = 'git-entry';
 
-    const badge = document.createElement('span');
-    badge.className = 'git-badge';
-    const s = entry.status.trim();
-    if (s === 'M' || s === 'MM') {
-      badge.textContent = 'M';
-      badge.classList.add('git-modified');
-    } else if (s === 'A') {
-      badge.textContent = 'A';
-      badge.classList.add('git-added');
-    } else if (s === 'D') {
-      badge.textContent = 'D';
-      badge.classList.add('git-deleted');
-    } else if (s === '??') {
-      badge.textContent = '?';
-      badge.classList.add('git-untracked');
-    } else if (s === 'R') {
-      badge.textContent = 'R';
-      badge.classList.add('git-modified');
-    } else {
-      badge.textContent = s;
-      badge.classList.add('git-modified');
-    }
-
-    const name = document.createElement('span');
-    name.className = 'file-name';
-    name.textContent = entry.file;
-    name.title = entry.file;
-
-    div.appendChild(badge);
-    div.appendChild(name);
-    gitStatusEl.appendChild(div);
+  try {
+    const entries = await window.electronAPI.readDir(workspaceFolder);
+    fileTree.innerHTML = '';
+    await renderTree(fileTree, workspaceFolder, entries);
+  } catch (err) {
+    console.error('Failed to read directory:', err);
+    fileTree.innerHTML = '<div class="empty-state">Failed to read folder</div>';
   }
 }
 
-export async function promptOpenFolder(): Promise<void> {
-  if (!window.electronAPI) return;
-  const folder = await window.electronAPI.openFolder();
-  if (folder) await openFolder(folder);
-}
-
-export async function openFolder(folder: string): Promise<void> {
-  workspaceFolder = folder;
-  expandedDirs.clear();
-  expandedDirs.add(folder);
-  await renderTree();
-
-  const folderNameEl = document.getElementById('folder-name');
-  if (folderNameEl) {
-    const parts = folder.split('/');
-    folderNameEl.textContent = parts[parts.length - 1] || folder;
-    folderNameEl.title = folder;
-  }
-}
-
-export async function refreshTree(): Promise<void> {
-  if (workspaceFolder) await renderTree();
-}
-
-async function renderTree(): Promise<void> {
-  if (!workspaceFolder || !window.electronAPI) return;
-  fileTreeEl.innerHTML = '';
-  await renderDir(workspaceFolder, 0);
-}
-
-async function renderDir(dirPath: string, depth: number): Promise<void> {
-  const entries: DirEntry[] = await window.electronAPI!.readDir(dirPath);
+async function renderTree(container: HTMLElement, dirPath: string, entries: DirEntry[]): Promise<void> {
+  const currentFile = getCurrentFilePath();
 
   for (const entry of entries) {
-    const fullPath = dirPath + '/' + entry.name;
-    const div = document.createElement('div');
-    div.className = 'file-entry' + (entry.isDirectory ? ' directory' : '');
-    div.dataset.path = fullPath;
-    if (fullPath === currentFilePath) div.classList.add('active');
-    div.style.paddingLeft = `${8 + depth * 16}px`;
-
-    const icon = document.createElement('span');
-    icon.className = 'file-icon';
-    if (entry.isDirectory) {
-      icon.textContent = expandedDirs.has(fullPath) ? '▾' : '▸';
-    } else {
-      icon.textContent = fileIcon(entry.name);
-    }
-
-    const name = document.createElement('span');
-    name.className = 'file-name';
-    name.textContent = entry.name;
-
-    div.appendChild(icon);
-    div.appendChild(name);
+    const fullPath = `${dirPath}/${entry.name}`;
+    const entryEl = document.createElement('div');
+    entryEl.className = 'file-entry';
+    entryEl.setAttribute('data-path', fullPath);
 
     if (entry.isDirectory) {
-      if (fullPath === selectedDir) div.classList.add('active');
-      div.addEventListener('click', async () => {
-        selectedDir = fullPath;
+      const isExpanded = expandedDirs.has(fullPath);
+      const isSelected = selectedDirectory === fullPath;
+
+      entryEl.innerHTML = `
+        <span class="file-entry-arrow">${isExpanded ? '▾' : '▸'}</span>
+        <span class="file-entry-icon">📁</span>
+        <span class="file-entry-name">${entry.name}</span>
+      `;
+
+      if (isSelected) {
+        entryEl.classList.add('directory-selected');
+      }
+
+      entryEl.addEventListener('click', async (e) => {
+        e.stopPropagation();
+
+        // Toggle expansion
         if (expandedDirs.has(fullPath)) {
           expandedDirs.delete(fullPath);
         } else {
           expandedDirs.add(fullPath);
         }
-        await renderTree();
+
+        // Select directory
+        selectedDirectory = fullPath;
+
+        await refreshFileTree();
       });
+
+      container.appendChild(entryEl);
+
+      // Render children if expanded
+      if (isExpanded) {
+        const childContainer = document.createElement('div');
+        childContainer.className = 'file-children';
+        try {
+          const childEntries = await window.electronAPI.readDir(fullPath);
+          await renderTree(childContainer, fullPath, childEntries);
+        } catch {
+          // Directory might be inaccessible
+        }
+        container.appendChild(childContainer);
+      }
     } else {
-      div.addEventListener('click', () => {
-        selectedDir = null; // clear folder selection when a file is clicked
-        selectFile(fullPath);
+      const icon = getFileIcon(entry.name);
+      const isSelected = currentFile === fullPath;
+
+      entryEl.innerHTML = `
+        <span class="file-entry-arrow"></span>
+        <span class="file-entry-icon">${icon}</span>
+        <span class="file-entry-name">${entry.name}</span>
+      `;
+
+      if (isSelected) {
+        entryEl.classList.add('selected');
+      }
+
+      entryEl.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        selectedDirectory = null;
+        await openFile(fullPath);
+        await refreshFileTree();
       });
-    }
 
-    fileTreeEl.appendChild(div);
-
-    if (entry.isDirectory && expandedDirs.has(fullPath)) {
-      await renderDir(fullPath, depth + 1);
+      container.appendChild(entryEl);
     }
+  }
+
+  // Render inline input if needed
+  if (inlineInputEntry && inlineInputEntry.parentPath === dirPath) {
+    const inputEl = document.createElement('div');
+    inputEl.className = 'file-entry';
+    inputEl.innerHTML = `
+      <span class="file-entry-arrow"></span>
+      <span class="file-entry-icon">${inlineInputEntry.type === 'folder' ? '📁' : '📄'}</span>
+      <input type="text" class="inline-input" placeholder="${inlineInputEntry.type === 'folder' ? 'Folder name' : 'File name'}">
+    `;
+
+    const input = inputEl.querySelector('input') as HTMLInputElement;
+    container.appendChild(inputEl);
+
+    input.focus();
+    input.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter') {
+        const name = input.value.trim();
+        if (name) {
+          await createEntry(dirPath, name, inlineInputEntry!.type);
+        }
+        inlineInputEntry = null;
+        await refreshFileTree();
+      } else if (e.key === 'Escape') {
+        inlineInputEntry = null;
+        await refreshFileTree();
+      }
+    });
+
+    input.addEventListener('blur', async () => {
+      if (inlineInputEntry) {
+        inlineInputEntry = null;
+        await refreshFileTree();
+      }
+    });
   }
 }
 
-async function selectFile(filePath: string): Promise<void> {
-  if (!window.electronAPI) return;
+function getFileIcon(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'md':
+      return '📝';
+    case 'html':
+    case 'htm':
+      return '🌐';
+    case 'ts':
+    case 'tsx':
+    case 'js':
+    case 'jsx':
+      return '📜';
+    case 'json':
+      return '📋';
+    case 'css':
+    case 'scss':
+    case 'sass':
+      return '🎨';
+    case 'png':
+    case 'jpg':
+    case 'jpeg':
+    case 'gif':
+    case 'svg':
+      return '🖼️';
+    default:
+      return '📄';
+  }
+}
+
+async function showNewFileInput(): Promise<void> {
+  const parentPath = getTargetDirectory();
+  if (!parentPath) return;
+
+  // Ensure parent is expanded
+  expandedDirs.add(parentPath);
+
+  inlineInputEntry = { parentPath, type: 'file' };
+  await refreshFileTree();
+}
+
+async function showNewFolderInput(): Promise<void> {
+  const parentPath = getTargetDirectory();
+  if (!parentPath) return;
+
+  // Ensure parent is expanded
+  expandedDirs.add(parentPath);
+
+  inlineInputEntry = { parentPath, type: 'folder' };
+  await refreshFileTree();
+}
+
+function getTargetDirectory(): string | null {
+  if (selectedDirectory) {
+    return selectedDirectory;
+  }
+  const currentFile = getCurrentFilePath();
+  if (currentFile) {
+    return currentFile.substring(0, currentFile.lastIndexOf('/'));
+  }
+  return workspaceFolder;
+}
+
+async function createEntry(parentPath: string, name: string, type: 'file' | 'folder'): Promise<void> {
+  const fullPath = `${parentPath}/${name}`;
+
   try {
-    const content = await window.electronAPI.readFile(filePath);
-    currentFilePath = filePath;
-    onFileOpen(filePath, content);
-    await renderTree();
+    if (type === 'folder') {
+      // Create folder with a .keep file
+      await window.electronAPI.writeFile(`${fullPath}/.keep`, '');
+      expandedDirs.add(fullPath);
+    } else {
+      await window.electronAPI.writeFile(fullPath, '');
+    }
   } catch (err) {
-    console.error('Failed to open file:', err);
+    console.error('Failed to create entry:', err);
   }
 }
 
-function fileIcon(name: string): string {
-  if (name.endsWith('.md')) return '📝';
-  if (name.endsWith('.html')) return '🌐';
-  if (name.endsWith('.ts') || name.endsWith('.js')) return '📜';
-  if (name.endsWith('.json')) return '⚙';
-  if (name.endsWith('.css')) return '🎨';
-  return '📄';
+async function deleteSelected(): Promise<void> {
+  let pathToDelete: string | null = null;
+  let description = '';
+
+  if (selectedDirectory) {
+    pathToDelete = selectedDirectory;
+    const name = selectedDirectory.split('/').pop();
+    description = `Delete folder "${name}" and all its contents?`;
+  } else {
+    const currentFile = getCurrentFilePath();
+    if (currentFile) {
+      pathToDelete = currentFile;
+      const name = currentFile.split('/').pop();
+      description = `Delete file "${name}"?`;
+    }
+  }
+
+  if (!pathToDelete) return;
+
+  if (confirm(description)) {
+    try {
+      await window.electronAPI.deleteEntry(pathToDelete);
+
+      // Clear selection and editor if needed
+      if (selectedDirectory === pathToDelete) {
+        selectedDirectory = null;
+      }
+      if (getCurrentFilePath() === pathToDelete) {
+        clearEditor();
+      }
+
+      await refreshFileTree();
+    } catch (err) {
+      console.error('Failed to delete:', err);
+    }
+  }
 }
 
-export function getCurrentFilePath(): string | null {
-  return currentFilePath;
+export async function refreshGitStatus(): Promise<void> {
+  const gitStatus = document.getElementById('git-status');
+  if (!gitStatus) return;
+
+  if (!workspaceFolder) {
+    gitStatus.innerHTML = '<div class="empty-state">No folder open</div>';
+    return;
+  }
+
+  try {
+    const entries = await window.electronAPI.gitStatus();
+
+    if (entries.length === 0) {
+      gitStatus.innerHTML = '<div class="empty-state">No changes</div>';
+      return;
+    }
+
+    gitStatus.innerHTML = entries
+      .map((entry) => {
+        const badge = getStatusBadge(entry.status);
+        return `
+          <div class="git-entry">
+            <span class="git-status-badge ${badge.class}">${badge.label}</span>
+            <span class="git-file-path">${entry.file}</span>
+          </div>
+        `;
+      })
+      .join('');
+  } catch (err) {
+    console.error('Failed to get git status:', err);
+    gitStatus.innerHTML = '<div class="empty-state">Not a git repository</div>';
+  }
+}
+
+function getStatusBadge(status: string): { label: string; class: string } {
+  const first = status[0];
+  const second = status[1];
+
+  // Check working tree changes first
+  if (second === 'M') return { label: 'M', class: 'modified' };
+  if (second === 'D') return { label: 'D', class: 'deleted' };
+  if (second === '?') return { label: '?', class: 'untracked' };
+
+  // Check index changes
+  if (first === 'M') return { label: 'M', class: 'modified' };
+  if (first === 'A') return { label: 'A', class: 'added' };
+  if (first === 'D') return { label: 'D', class: 'deleted' };
+  if (first === 'R') return { label: 'R', class: 'renamed' };
+  if (first === '?') return { label: '?', class: 'untracked' };
+
+  return { label: status, class: 'modified' };
 }
 
 export function getWorkspaceFolder(): string | null {
   return workspaceFolder;
 }
 
-export async function saveCurrentFile(content: string): Promise<void> {
-  if (!window.electronAPI || !currentFilePath) return;
-  await window.electronAPI.writeFile(currentFilePath, content);
-}
-
-// ── Clean workspace ─────────────────────────────────────────────────
-
-export async function cleanWorkspace(): Promise<void> {
-  if (!window.electronAPI || !workspaceFolder) {
-    alert('No workspace folder open.');
-    return;
-  }
-
-  // Ask the backend for a preview (it sees all entries including dotfiles)
-  const preview = await window.electronAPI.cleanWorkspace({ dryRun: true });
-  if (!preview.ok) {
-    alert(preview.error || 'Clean failed');
-    return;
-  }
-
-  const toDelete = preview.toDelete || [];
-  if (toDelete.length === 0) {
-    alert('Nothing to clean — all files match .blueprintfiles.');
-    return;
-  }
-
-  const msg = `Delete ${toDelete.length} file(s)/folder(s) not listed in .blueprintfiles?\n\n` +
-    toDelete.join('\n') +
-    '\n\nThis cannot be undone.';
-  if (!confirm(msg)) return;
-
-  const result = await window.electronAPI.cleanWorkspace();
-  if (!result.ok) {
-    alert('Clean failed: ' + (result.error || 'Unknown error'));
-    return;
-  }
-
-  // If current file was deleted, clear editor
-  if (currentFilePath) {
-    const relPath = currentFilePath.slice(workspaceFolder.length + 1).split('/')[0];
-    if (result.deleted?.includes(relPath)) {
-      currentFilePath = null;
-      onFileOpen('', '');
-    }
-  }
-  selectedDir = null;
-  await renderTree();
-}
-
-// ── Delete file / folder ────────────────────────────────────────────
-
-async function deleteSelectedEntry(): Promise<void> {
-  if (!window.electronAPI) return;
-
-  // Determine what to delete: selected directory or current file
-  const targetPath = selectedDir || currentFilePath;
-  if (!targetPath || targetPath === workspaceFolder) return;
-
-  const name = targetPath.split('/').pop() || targetPath;
-  const isDir = selectedDir !== null;
-  const label = isDir ? `folder "${name}" and all its contents` : `file "${name}"`;
-
-  if (!confirm(`Delete ${label}?`)) return;
-
-  try {
-    await window.electronAPI.deleteEntry(targetPath);
-
-    // If we deleted the current file, clear editor state
-    if (currentFilePath && (currentFilePath === targetPath || currentFilePath.startsWith(targetPath + '/'))) {
-      currentFilePath = null;
-      onFileOpen('', '');
-    }
-    if (selectedDir === targetPath) selectedDir = null;
-    expandedDirs.delete(targetPath);
-    await renderTree();
-  } catch (err) {
-    console.error('Failed to delete:', err);
-    alert('Failed to delete: ' + (err as Error).message);
-  }
-}
-
-// ── Create new file / folder ────────────────────────────────────────
-
-function getActiveDir(): string | null {
-  // Prefer explicitly selected directory, then parent of current file, then workspace root
-  if (selectedDir) return selectedDir;
-  if (currentFilePath) {
-    const parts = currentFilePath.split('/');
-    parts.pop();
-    return parts.join('/');
-  }
-  return workspaceFolder;
-}
-
-function createNewEntry(type: 'file' | 'folder'): void {
-  if (!workspaceFolder) return;
-
-  const parentDir = getActiveDir();
-  if (!parentDir) return;
-
-  // Ensure parent is expanded so the inline input is visible
-  expandedDirs.add(parentDir);
-
-  // Render tree, then append an inline input at the target location
-  renderTree().then(() => {
-    const div = document.createElement('div');
-    div.className = 'file-entry';
-
-    // Determine depth based on parentDir relative to workspaceFolder
-    const relPath = parentDir.slice(workspaceFolder!.length);
-    const depth = relPath ? relPath.split('/').filter(Boolean).length : 0;
-    div.style.paddingLeft = `${8 + depth * 16}px`;
-
-    const icon = document.createElement('span');
-    icon.className = 'file-icon';
-    icon.textContent = type === 'folder' ? '📁' : '📄';
-
-    const input = document.createElement('input');
-    input.className = 'inline-input';
-    input.type = 'text';
-    input.placeholder = type === 'folder' ? 'folder name' : 'filename.ext';
-
-    div.appendChild(icon);
-    div.appendChild(input);
-
-    // Insert the input at the right position within parentDir's children
-    const allEntries = Array.from(fileTreeEl.querySelectorAll('.file-entry'));
-    // Find the parentDir entry itself, then skip past its children
-    let insertionPoint: Element | null = null;
-    let insideParent = parentDir === workspaceFolder; // root has no entry
-    for (const entry of allEntries) {
-      const entryPath = (entry as HTMLElement).dataset.path;
-      if (entryPath === parentDir) {
-        insideParent = true;
-        insertionPoint = entry;
-        continue;
-      }
-      if (insideParent && entryPath && entryPath.startsWith(parentDir + '/')) {
-        insertionPoint = entry;
-      } else if (insideParent && entryPath && !entryPath.startsWith(parentDir + '/')) {
-        break;
-      }
-    }
-    if (insertionPoint && insertionPoint.nextSibling) {
-      fileTreeEl.insertBefore(div, insertionPoint.nextSibling);
-    } else {
-      fileTreeEl.appendChild(div);
-    }
-
-    input.focus();
-
-    const commit = async () => {
-      const name = input.value.trim();
-      if (!name) {
-        div.remove();
-        return;
-      }
-      const fullPath = parentDir + '/' + name;
-      try {
-        if (type === 'folder') {
-          // Create folder by writing a placeholder and ensuring dir exists
-          await window.electronAPI!.writeFile(fullPath + '/.keep', '');
-          expandedDirs.add(fullPath);
-        } else {
-          await window.electronAPI!.writeFile(fullPath, '');
-        }
-        await renderTree();
-        if (type === 'file') {
-          await selectFile(fullPath);
-        }
-      } catch (err) {
-        console.error(`Failed to create ${type}:`, err);
-        div.remove();
-      }
-    };
-
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        commit();
-      }
-      if (e.key === 'Escape') {
-        div.remove();
-      }
-    });
-    input.addEventListener('blur', commit);
-  });
+export async function setWorkspaceFolder(folder: string): Promise<void> {
+  workspaceFolder = folder;
+  expandedDirs.clear();
+  expandedDirs.add(folder);
+  updateFolderDisplay();
+  await refreshFileTree();
 }

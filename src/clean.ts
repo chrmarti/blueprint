@@ -1,60 +1,83 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
+// clean.ts - Workspace cleanup logic for Blueprint Implementer
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface CleanResult {
   ok: boolean;
-  error?: string;
-  toDelete?: string[];
   deleted?: string[];
+  error?: string;
+}
+
+export interface CleanOptions {
+  dryRun?: boolean;
 }
 
 /**
- * Clean a workspace by removing everything except entries listed in .blueprintfiles and .git.
- * The .blueprintfiles file uses one relative path per line, with # comments and blank lines ignored.
+ * Reads .blueprintfiles and returns the set of paths to preserve.
+ * Always includes .blueprintfiles and .git.
  */
-export function cleanWorkspace(workspaceFolder: string, opts?: { dryRun?: boolean }): CleanResult {
-  const bpFilePath = path.join(workspaceFolder, '.blueprintfiles');
-  if (!fs.existsSync(bpFilePath)) {
-    return { ok: false, error: 'No .blueprintfiles found in workspace root' };
-  }
-
-  // Parse .blueprintfiles: one relative path per line, # comments, blank lines ignored
-  const raw = fs.readFileSync(bpFilePath, 'utf-8');
+export async function getKeepSet(workspaceFolder: string): Promise<Set<string>> {
   const keepSet = new Set<string>();
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    keepSet.add(trimmed.replace(/\/$/, '')); // normalise: strip trailing slash
-  }
-  // Always keep .blueprintfiles itself and .git
   keepSet.add('.blueprintfiles');
   keepSet.add('.git');
 
-  // Collect root entries to delete
-  const entries = fs.readdirSync(workspaceFolder);
-  const toDelete: string[] = [];
-  for (const name of entries) {
-    if (keepSet.has(name)) continue;
-    toDelete.push(name);
+  const blueprintFilesPath = path.join(workspaceFolder, '.blueprintfiles');
+  if (!fs.existsSync(blueprintFilesPath)) {
+    return keepSet;
   }
 
-  if (opts?.dryRun) return { ok: true, toDelete };
-
-  if (toDelete.length === 0) return { ok: true, deleted: [] };
-
-  for (const name of toDelete) {
-    const full = path.join(workspaceFolder, name);
-    const stat = fs.statSync(full);
-    if (stat.isDirectory()) {
-      fs.rmSync(full, { recursive: true, force: true });
-    } else {
-      fs.unlinkSync(full);
+  const content = await fs.promises.readFile(blueprintFilesPath, 'utf-8');
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#')) {
+      // Remove trailing slash
+      keepSet.add(trimmed.replace(/\/$/, ''));
     }
   }
-  return { ok: true, deleted: toDelete };
+
+  return keepSet;
+}
+
+/**
+ * Cleans the workspace by removing all root-level entries not in .blueprintfiles.
+ */
+export async function cleanWorkspace(
+  workspaceFolder: string,
+  options?: CleanOptions
+): Promise<CleanResult> {
+  const blueprintFilesPath = path.join(workspaceFolder, '.blueprintfiles');
+  if (!fs.existsSync(blueprintFilesPath)) {
+    return { ok: false, error: 'No .blueprintfiles found' };
+  }
+
+  try {
+    const keepSet = await getKeepSet(workspaceFolder);
+    const entries = await fs.promises.readdir(workspaceFolder);
+    const toDelete: string[] = [];
+
+    for (const entry of entries) {
+      if (!keepSet.has(entry)) {
+        toDelete.push(entry);
+      }
+    }
+
+    if (options?.dryRun) {
+      return { ok: true, deleted: toDelete };
+    }
+
+    for (const entry of toDelete) {
+      const entryPath = path.join(workspaceFolder, entry);
+      const stat = await fs.promises.stat(entryPath);
+      if (stat.isDirectory()) {
+        await fs.promises.rm(entryPath, { recursive: true });
+      } else {
+        await fs.promises.unlink(entryPath);
+      }
+    }
+
+    return { ok: true, deleted: toDelete };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 }

@@ -1,97 +1,104 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
+// preview.ts - Browser tab iframe management for Blueprint Implementer
 
-let frameEl: HTMLIFrameElement;
-let consoleLogEl: HTMLElement;
-let viewportBtns: NodeListOf<HTMLButtonElement>;
-let addressInput: HTMLInputElement;
+let previewIframe: HTMLIFrameElement | null = null;
+let addressInput: HTMLInputElement | null = null;
 
 export function initPreview(): void {
-  frameEl = document.getElementById('preview-frame') as HTMLIFrameElement;
-  consoleLogEl = document.getElementById('console-log') as HTMLElement;
-  viewportBtns = document.querySelectorAll('#viewport-controls button') as NodeListOf<HTMLButtonElement>;
-  addressInput = document.getElementById('preview-url') as HTMLInputElement;
+  previewIframe = document.getElementById('browser-iframe') as HTMLIFrameElement;
+  addressInput = document.getElementById('browser-url') as HTMLInputElement;
 
-  addressInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      let url = addressInput.value.trim();
-      if (url && !url.match(/^https?:\/\//)) url = 'http://' + url;
-      if (url) loadPreviewUrl(url);
-    }
-  });
+  const goButton = document.getElementById('browser-go');
 
-  document.getElementById('preview-refresh')?.addEventListener('click', () => {
-    // Re-inject current srcdoc
-    const current = frameEl.srcdoc;
-    if (current) loadPreview(current);
-  });
-
-  document.getElementById('preview-popout')?.addEventListener('click', () => {
-    const html = frameEl.srcdoc;
-    if (html) {
-      const w = window.open('', '_blank');
-      if (w) {
-        w.document.open();
-        w.document.write(html);
-        w.document.close();
+  if (addressInput) {
+    addressInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        navigateToUrl(addressInput!.value);
       }
-    }
-  });
-
-  viewportBtns.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      viewportBtns.forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-      const width = btn.dataset.width || '100%';
-      frameEl.style.maxWidth = width;
-      frameEl.style.margin = width === '100%' ? '0' : '0 auto';
-      frameEl.style.display = 'block';
     });
-  });
+  }
 
-  // Listen for console messages from iframe
-  window.addEventListener('message', (e) => {
-    if (e.data?.type === 'console') {
-      appendLog(e.data.level, e.data.args);
-    }
-  });
+  if (goButton) {
+    goButton.addEventListener('click', () => {
+      if (addressInput) {
+        navigateToUrl(addressInput.value);
+      }
+    });
+  }
 }
 
-export function loadPreview(html: string): void {
-  consoleLogEl.innerHTML = '';
+export function navigateToUrl(url: string): void {
+  if (!previewIframe) return;
 
-  // Inject console forwarding script
-  const consoleForwarder = `
-<script>
-(function() {
-  const orig = { log: console.log, warn: console.warn, error: console.error };
-  ['log','warn','error'].forEach(level => {
-    console[level] = function(...args) {
-      orig[level].apply(console, args);
-      parent.postMessage({ type: 'console', level, args: args.map(String) }, '*');
-    };
-  });
-})();
-</script>`;
+  // Auto-prepend http:// if no protocol
+  let finalUrl = url.trim();
+  if (finalUrl && !finalUrl.match(/^https?:\/\//i)) {
+    finalUrl = 'http://' + finalUrl;
+  }
 
-  const injected = html.replace(/<head>/i, `<head>${consoleForwarder}`);
-  frameEl.srcdoc = injected.includes('<head>') ? injected : consoleForwarder + html;
+  if (finalUrl) {
+    previewIframe.src = finalUrl;
+    if (addressInput) {
+      addressInput.value = finalUrl;
+    }
+  }
 }
 
 export function loadPreviewUrl(url: string): void {
-  consoleLogEl.innerHTML = '';
-  addressInput.value = url;
-  frameEl.removeAttribute('srcdoc');
-  frameEl.sandbox.add('allow-same-origin');
-  frameEl.src = url;
+  navigateToUrl(url);
 }
 
-function appendLog(level: string, args: string[]): void {
-  const div = document.createElement('div');
-  div.className = `log-entry log-${level}`;
-  div.textContent = `[${level}] ${args.join(' ')}`;
-  consoleLogEl.appendChild(div);
-  consoleLogEl.scrollTop = consoleLogEl.scrollHeight;
+export function loadPreviewContent(html: string): void {
+  if (!previewIframe) return;
+
+  // Inject console forwarding script
+  const consoleScript = `
+    <script>
+      (function() {
+        const originalConsole = {
+          log: console.log,
+          warn: console.warn,
+          error: console.error,
+        };
+        ['log', 'warn', 'error'].forEach(method => {
+          console[method] = function(...args) {
+            originalConsole[method].apply(console, args);
+            parent.postMessage({ type: 'console', method, args: args.map(String) }, '*');
+          };
+        });
+      })();
+    </script>
+  `;
+
+  // Inject script into head
+  let modifiedHtml = html;
+  if (html.includes('<head>')) {
+    modifiedHtml = html.replace('<head>', '<head>' + consoleScript);
+  } else if (html.includes('<html>')) {
+    modifiedHtml = html.replace('<html>', '<html><head>' + consoleScript + '</head>');
+  } else {
+    modifiedHtml = consoleScript + html;
+  }
+
+  previewIframe.srcdoc = modifiedHtml;
+  if (addressInput) {
+    addressInput.value = '';
+  }
 }
+
+export function clearPreview(): void {
+  if (previewIframe) {
+    previewIframe.src = 'about:blank';
+    previewIframe.srcdoc = '';
+  }
+  if (addressInput) {
+    addressInput.value = '';
+  }
+}
+
+// Listen for console messages from iframe
+window.addEventListener('message', (event) => {
+  if (event.data?.type === 'console') {
+    const { method, args } = event.data;
+    console.log(`[Preview ${method}]`, ...args);
+  }
+});

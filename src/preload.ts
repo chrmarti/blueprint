@@ -1,76 +1,71 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
+// preload.ts - Electron preload script for Blueprint Implementer
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  // File system
+  // Dialog
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
+  saveFile: (defaultName: string) => ipcRenderer.invoke('dialog:saveFile', defaultName),
+
+  // Workspace
+  getWorkspaceFolder: () => ipcRenderer.invoke('workspace:getFolder'),
+
+  // File system
   readDir: (dirPath: string) => ipcRenderer.invoke('fs:readDir', dirPath),
   readFile: (filePath: string) => ipcRenderer.invoke('fs:readFile', filePath),
-  writeFile: (filePath: string, content: string) =>
-    ipcRenderer.invoke('fs:writeFile', filePath, content),
-  deleteEntry: (targetPath: string) => ipcRenderer.invoke('fs:delete', targetPath),
-  cleanWorkspace: (opts?: { dryRun?: boolean }) => ipcRenderer.invoke('fs:cleanWorkspace', opts),
-  getWorkspaceFolder: () => ipcRenderer.invoke('workspace:getFolder'),
-  showSaveDialog: (defaultName: string) =>
-    ipcRenderer.invoke('dialog:saveFile', defaultName),
+  writeFile: (filePath: string, content: string) => ipcRenderer.invoke('fs:writeFile', filePath, content),
+  deleteEntry: (entryPath: string) => ipcRenderer.invoke('fs:delete', entryPath),
+  cleanWorkspace: (options?: { dryRun?: boolean }) => ipcRenderer.invoke('fs:cleanWorkspace', options),
 
   // Auth
-  getAuthUser: () => ipcRenderer.invoke('auth:getUser'),
-  copilotToken: () => ipcRenderer.invoke('api:copilotToken'),
-  copilotModels: (copilotToken: string) => ipcRenderer.invoke('api:copilotModels', copilotToken),
-  // Copilot SDK
-  copilotInit: () => ipcRenderer.invoke('copilot:init'),
-  copilotImplement: (opts: { model: string; userPrompt: string }) =>
-    ipcRenderer.invoke('copilot:implement', opts),
+  getUser: () => ipcRenderer.invoke('auth:getUser'),
+
+  // API
+  copilotListModels: () => ipcRenderer.invoke('copilot:listModels'),
+
+  // Copilot Agent
+  copilotInit: (githubToken: string) => ipcRenderer.invoke('copilot:init', githubToken),
+  copilotImplement: (options: { model: string; systemPrompt?: string; userPrompt: string }) =>
+    ipcRenderer.invoke('copilot:implement', options),
   copilotStop: () => ipcRenderer.invoke('copilot:stop'),
-  onCopilotChunk: (callback: (delta: string) => void) => {
-    ipcRenderer.on('copilot:chunk', (_event, delta: string) => callback(delta));
+  onCopilotChunk: (callback: (chunk: string) => void) => {
+    ipcRenderer.on('copilot:chunk', (_event, chunk) => callback(chunk));
   },
-  removeCopilotChunkListeners: () => {
+  onCopilotEvent: (callback: (event: ImplementEvent) => void) => {
+    ipcRenderer.on('copilot:event', (_event, event) => callback(event));
+  },
+  removeCopilotListeners: () => {
     ipcRenderer.removeAllListeners('copilot:chunk');
-  },
-  onCopilotEvent: (callback: (event: { type: string; message?: string; data?: any }) => void) => {
-    ipcRenderer.on('copilot:event', (_event, agentEvent) => callback(agentEvent));
-  },
-  removeCopilotEventListeners: () => {
     ipcRenderer.removeAllListeners('copilot:event');
   },
 
-  // Window events
-  onFolderOpened: (callback: (folder: string) => void) => {
-    ipcRenderer.on('workspace:folderOpened', (_event, folder: string) =>
-      callback(folder),
-    );
-  },
-  onMenuOpenFolder: (callback: () => void) => {
-    ipcRenderer.on('menu:openFolder', () => callback());
-  },
-  onAutoImplement: (callback: (filePath: string | null) => void) => {
-    ipcRenderer.on('command:implement', (_event, filePath: string | null) => callback(filePath));
-  },
+  // Git
   gitStatus: () => ipcRenderer.invoke('git:status'),
 
   // Terminal
   terminalSpawn: () => ipcRenderer.invoke('terminal:spawn'),
-  terminalWrite: (data: string) => ipcRenderer.invoke('terminal:write', data),
-  terminalResize: (cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', cols, rows),
+  terminalWrite: (data: string) => ipcRenderer.send('terminal:write', data),
+  terminalResize: (cols: number, rows: number) => ipcRenderer.send('terminal:resize', cols, rows),
   terminalKill: () => ipcRenderer.invoke('terminal:kill'),
   onTerminalData: (callback: (data: string) => void) => {
-    ipcRenderer.on('terminal:data', (_event, data: string) => callback(data));
+    ipcRenderer.on('terminal:data', (_event, data) => callback(data));
+  },
+  onTerminalExit: (callback: (code: number) => void) => {
+    ipcRenderer.on('terminal:exit', (_event, code) => callback(code));
   },
   removeTerminalDataListeners: () => {
     ipcRenderer.removeAllListeners('terminal:data');
   },
-  onTerminalExit: (callback: () => void) => {
-    ipcRenderer.on('terminal:exit', () => callback());
-  },
   removeTerminalExitListeners: () => {
     ipcRenderer.removeAllListeners('terminal:exit');
   },
-
-  platform: process.platform,
 });
+
+// Listen for workspace changes from main process
+ipcRenderer.on('workspace:changed', (_event, folder) => {
+  window.dispatchEvent(new CustomEvent('workspace-changed', { detail: folder }));
+});
+
+interface ImplementEvent {
+  type: string;
+  data: Record<string, unknown>;
+}

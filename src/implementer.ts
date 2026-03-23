@@ -1,236 +1,359 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
-import { loadSettings, saveOutput, pushHistory } from './storage';
-import { isSignedIn } from './auth';
-import { refreshTree } from './files';
-import { loadPreviewUrl } from './preview';
-import { showBrowserTab } from './editor';
+// implementer.ts - Output panel for agent events and streaming for Blueprint Implementer
 import { Terminal } from '@xterm/xterm';
+import { getTheme, getSelectedModel, setSelectedModel, addToHistory } from './storage';
+import { getCachedUser } from './auth';
+import { refreshFileTree, getWorkspaceFolder } from './files';
+import { loadPreviewUrl } from './preview';
+import { switchEditorTab } from './editor';
 
-let term: Terminal;
-let outputContainerEl: HTMLElement;
-let statusEl: HTMLElement;
-let plainTextBuffer = '';
-let onImplemented: (html: string) => void = () => {};
+let outputTerminal: Terminal | null = null;
+let outputContainer: HTMLElement | null = null;
+let modelSelect: HTMLSelectElement | null = null;
+let statusEl: HTMLElement | null = null;
+let isImplementing = false;
+let outputBuffer = '';
 
-function getTermTheme(): { background: string; foreground: string; cursor: string } {
-  const style = getComputedStyle(document.documentElement);
-  return {
-    background: style.getPropertyValue('--bg-surface').trim() || '#252536',
-    foreground: style.getPropertyValue('--text').trim() || '#cdd6f4',
-    cursor: style.getPropertyValue('--text-muted').trim() || '#888caa',
-  };
-}
+export async function initImplementer(): Promise<void> {
+  outputContainer = document.getElementById('output-terminal');
+  modelSelect = document.getElementById('model-select') as HTMLSelectElement;
+  statusEl = document.getElementById('implement-status');
 
-export function initImplementer(opts: { onImplemented: (html: string) => void }): void {
-  outputContainerEl = document.getElementById('implement-output') as HTMLElement;
-  statusEl = document.getElementById('implement-status') as HTMLElement;
-  onImplemented = opts.onImplemented;
+  // Initialize output terminal
+  if (outputContainer) {
+    outputTerminal = new Terminal({
+      cursorBlink: false,
+      cursorStyle: 'underline',
+      fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace",
+      fontSize: 12,
+      lineHeight: 1.3,
+      theme: getOutputTerminalTheme(),
+      convertEol: true,
+      scrollback: 10000,
+    });
+    outputTerminal.open(outputContainer);
+  }
 
-  const colors = getTermTheme();
-  term = new Terminal({
-    convertEol: true,
-    scrollback: 10000,
-    fontSize: 13,
-    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
-    theme: {
-      background: colors.background,
-      foreground: colors.foreground,
-      cursor: colors.cursor,
-    },
-    cursorStyle: 'bar',
-    cursorBlink: false,
-    disableStdin: true,
+  // Setup Copilot event listeners
+  window.electronAPI.onCopilotChunk((chunk) => {
+    outputTerminal?.write(chunk);
+    outputBuffer += chunk;
   });
-  term.open(outputContainerEl);
 
-  // Fit terminal to container on resize
-  const fit = () => {
-    const dims = outputContainerEl.getBoundingClientRect();
-    if (dims.width > 0 && dims.height > 0) {
-      const cellWidth = term.options.fontSize! * 0.6;
-      const cellHeight = (term.options.fontSize! || 13) * 1.2;
-      const cols = Math.max(20, Math.floor((dims.width - 16) / cellWidth));
-      const rows = Math.max(5, Math.floor((dims.height - 16) / cellHeight));
-      term.resize(cols, rows);
-    }
-  };
-  fit();
-  new ResizeObserver(fit).observe(outputContainerEl);
-}
+  window.electronAPI.onCopilotEvent((event) => {
+    handleCopilotEvent(event);
+  });
 
-export function setOutput(text: string): void {
-  plainTextBuffer = text;
-  term.clear();
-  term.write(text);
-}
-
-export function getOutput(): string {
-  return plainTextBuffer;
-}
-
-export function updateTermTheme(): void {
-  if (!term) return;
-  const colors = getTermTheme();
-  term.options.theme = {
-    background: colors.background,
-    foreground: colors.foreground,
-    cursor: colors.cursor,
-  };
-}
-
-function appendLog(line: string, inline?: boolean): void {
-  if (inline) {
-    plainTextBuffer += line;
-    term.write(line);
-  } else {
-    plainTextBuffer += line + '\n';
-    term.writeln(line);
-  }
-}
-
-export async function implement(markdown: string): Promise<void> {
-  if (!isSignedIn()) {
-    setStatus('error', 'Not signed in. Click the Sign in button in the toolbar or open Settings.');
-    return;
+  // Setup model selection
+  if (modelSelect) {
+    modelSelect.addEventListener('change', () => {
+      setSelectedModel(modelSelect!.value);
+    });
   }
 
-  // If editor is empty, fall back to reading blueprint.md from workspace
-  if (!markdown.trim() && window.electronAPI) {
-    const folder = await window.electronAPI.getWorkspaceFolder();
-    if (folder) {
-      try {
-        markdown = await window.electronAPI.readFile(folder + '/blueprint.md');
-      } catch {
-        // no blueprint.md found
-      }
-    }
-  }
+  // Setup buttons
+  document.getElementById('implement-btn')?.addEventListener('click', startImplementation);
+  document.getElementById('stop-btn')?.addEventListener('click', stopImplementation);
+  document.getElementById('save-output-btn')?.addEventListener('click', saveOutput);
+  document.getElementById('clean-btn')?.addEventListener('click', cleanWorkspace);
+}
 
-  if (!markdown.trim()) {
-    setStatus('error', 'Nothing to implement. Open a markdown file, type instructions, or open a folder with a blueprint.md.');
-    return;
-  }
-
-  const settings = loadSettings();
-  setStatus('info', 'Implementing...');
-  term.clear();
-  plainTextBuffer = '';
-
-  if (!window.electronAPI) {
-    setStatus('error', 'Electron API not available');
-    return;
-  }
+export async function loadModels(): Promise<void> {
+  if (!modelSelect) return;
 
   try {
-    // Listen for agent events from the Copilot SDK
-    window.electronAPI.removeCopilotChunkListeners();
-    window.electronAPI.removeCopilotEventListeners();
+    const response = await window.electronAPI.copilotListModels();
+    if (response.ok && response.models.length > 0) {
+      const savedModel = getSelectedModel();
 
-    // Stream text deltas
-    let textOutput = '';
-    window.electronAPI.onCopilotChunk((delta: string) => {
-      textOutput += delta;
-      appendLog(delta, true);
-    });
+      modelSelect.innerHTML = response.models
+        .map((m) => `<option value="${m.id}" ${m.id === savedModel ? 'selected' : ''}>${m.name}</option>`)
+        .join('');
 
-    // Agent lifecycle events (tools, progress)
-    window.electronAPI.onCopilotEvent((event: { type: string; message?: string; data?: any }) => {
-      switch (event.type) {
-        case 'tool_start':
-          appendLog(`🔧 ${event.message}`);
-          setStatus('info', `🔧 ${event.message}`);
-          break;
-        case 'tool_complete':
-          appendLog(`✅ ${event.message}`);
-          setStatus('info', `✅ Tool done`);
-          break;
-        case 'usage':
-          appendLog(`📊 ${event.message}`);
-          setStatus('info', `📊 ${event.message}`);
-          break;
-        case 'error':
-          appendLog(`❌ ${event.message || 'Unknown error'}`);
-          setStatus('error', event.message || 'Unknown error');
-          break;
-        case 'preview_url': {
-          const url = event.data?.url;
-          if (url) {
-            loadPreviewUrl(url);
-            showBrowserTab();
-          }
-          break;
-        }
-        case 'files_changed':
-          refreshTree();
-          break;
-        case 'done':
-          appendLog(`✨ ${event.message || 'Done'}`);
-          setStatus('success', event.message || 'Done');
-          break;
-        case 'turn_start':
-        case 'turn_end':
-          appendLog(event.message || event.type);
-          break;
-        case 'log':
-          appendLog(event.message || '');
-          break;
-        default:
-          if (event.message) appendLog(event.message);
-          break;
+      // Ensure saved model is selected
+      if (savedModel && response.models.some((m) => m.id === savedModel)) {
+        modelSelect.value = savedModel;
       }
-    });
-
-    const result = await window.electronAPI.copilotImplement({
-      model: settings.model,
-      userPrompt: markdown,
-    });
-    window.electronAPI.removeCopilotChunkListeners();
-    window.electronAPI.removeCopilotEventListeners();
-
-    if (!result.ok) {
-      setStatus('error', `Implementation failed: ${result.error || 'Unknown error'}`);
-      return;
+    } else {
+      modelSelect.innerHTML = '<option value="">Sign in to load models</option>';
     }
-
-    // The agent writes files to disk — the output area already has the full log
-    const output = plainTextBuffer || '(Agent wrote files to disk — check the file tree)';
-
-    saveOutput(output);
-    pushHistory({
-      timestamp: Date.now(),
-      markdown,
-      output,
-    });
-
-    // Refresh file tree one more time to pick up any late writes
-    refreshTree();
-    setStatus('success', 'Implementation complete — files written to workspace');
-    onImplemented(output);
   } catch (err) {
-    setStatus('error', `Implementation failed: ${(err as Error).message}`);
+    console.error('Failed to load models:', err);
+    modelSelect.innerHTML = '<option value="">Failed to load models</option>';
   }
 }
 
-function setStatus(type: 'info' | 'error' | 'success', msg: string): void {
-  statusEl.textContent = msg;
-  statusEl.className = type === 'info' ? '' : type;
+function getOutputTerminalTheme(): { background: string; foreground: string; cursor: string } {
+  const theme = getTheme();
+  if (theme === 'dark') {
+    return {
+      background: '#1e1e1e',
+      foreground: '#e0e0e0',
+      cursor: '#e0e0e0',
+    };
+  }
+  return {
+    background: '#ffffff',
+    foreground: '#1a1a1a',
+    cursor: '#1a1a1a',
+  };
 }
 
-export async function saveOutputToFile(): Promise<void> {
-  if (!window.electronAPI) return;
-  const output = getOutput();
-  if (!output.trim()) {
-    setStatus('error', 'No output to save');
+export function updateOutputTerminalTheme(): void {
+  if (outputTerminal) {
+    outputTerminal.options.theme = getOutputTerminalTheme();
+  }
+}
+
+async function startImplementation(): Promise<void> {
+  if (isImplementing) return;
+
+  const user = getCachedUser();
+  if (!user) {
+    setStatus('Not signed in', 'error');
     return;
   }
-  const filePath = await window.electronAPI.showSaveDialog('output.html');
-  if (filePath) {
-    await window.electronAPI.writeFile(filePath, output);
-    setStatus('success', `Saved to ${filePath.split('/').pop()}`);
-    refreshTree();
+
+  const workspaceFolder = getWorkspaceFolder();
+  if (!workspaceFolder) {
+    setStatus('No folder open', 'error');
+    return;
   }
+
+  const model = modelSelect?.value;
+  if (!model) {
+    setStatus('No model selected', 'error');
+    return;
+  }
+
+  isImplementing = true;
+  outputBuffer = '';
+  outputTerminal?.clear();
+  setStatus('Implementing...', 'running');
+
+  // Initialize agent
+  const initResult = await window.electronAPI.copilotInit('');
+  if (!initResult.ok) {
+    setStatus(`Init failed: ${initResult.error}`, 'error');
+    isImplementing = false;
+    return;
+  }
+
+  // Read blueprint.md for the prompt
+  let blueprintContent = '';
+  try {
+    blueprintContent = await window.electronAPI.readFile(`${workspaceFolder}/blueprint.md`);
+  } catch {
+    setStatus('No blueprint.md found', 'error');
+    isImplementing = false;
+    return;
+  }
+
+  // Prefix with implementation directive
+  const userPrompt = `Implement the following blueprint now. Do not ask for confirmation — start immediately.\n\n${blueprintContent}`;
+
+  // Start implementation
+  const result = await window.electronAPI.copilotImplement({
+    model,
+    userPrompt,
+  });
+
+  if (result.ok) {
+    setStatus('Complete', 'success');
+    // Save to history
+    addToHistory({
+      timestamp: Date.now(),
+      model,
+      prompt: blueprintContent,
+      output: outputBuffer,
+    });
+  } else {
+    setStatus(`Error: ${result.error}`, 'error');
+  }
+
+  isImplementing = false;
+  await refreshFileTree();
+}
+
+async function stopImplementation(): Promise<void> {
+  if (!isImplementing) return;
+
+  await window.electronAPI.copilotStop();
+  setStatus('Stopped', 'error');
+  isImplementing = false;
+}
+
+async function saveOutput(): Promise<void> {
+  const path = await window.electronAPI.saveFile('output.txt');
+  if (path) {
+    await window.electronAPI.writeFile(path, outputBuffer);
+  }
+}
+
+async function cleanWorkspace(): Promise<void> {
+  const workspaceFolder = getWorkspaceFolder();
+  if (!workspaceFolder) {
+    alert('No folder open');
+    return;
+  }
+
+  // First do a dry run
+  const dryResult = await window.electronAPI.cleanWorkspace({ dryRun: true });
+
+  if (!dryResult.ok) {
+    if (dryResult.error?.includes('.blueprintfiles')) {
+      alert('No .blueprintfiles found in the workspace root. Create a .blueprintfiles file listing the files and folders to preserve.');
+    } else {
+      alert(`Clean failed: ${dryResult.error}`);
+    }
+    return;
+  }
+
+  if (!dryResult.deleted || dryResult.deleted.length === 0) {
+    alert('Nothing to clean — workspace matches .blueprintfiles.');
+    return;
+  }
+
+  const confirmMsg = `The following ${dryResult.deleted.length} item(s) will be deleted:\n\n${dryResult.deleted.join('\n')}\n\nProceed?`;
+  if (!confirm(confirmMsg)) {
+    return;
+  }
+
+  // Execute clean
+  const result = await window.electronAPI.cleanWorkspace();
+  if (result.ok) {
+    await refreshFileTree();
+    alert(`Cleaned ${result.deleted?.length || 0} item(s).`);
+  } else {
+    alert(`Clean failed: ${result.error}`);
+  }
+}
+
+function setStatus(text: string, type: 'running' | 'success' | 'error' | ''): void {
+  if (statusEl) {
+    statusEl.textContent = text;
+    statusEl.className = 'output-status ' + type;
+  }
+}
+
+function handleCopilotEvent(event: ImplementEvent): void {
+  const { type, data } = event;
+
+  switch (type) {
+    case 'tool_start': {
+      const toolName = data.toolName as string;
+      const args = data.arguments as Record<string, unknown> | undefined;
+      const summary = getToolSummary(toolName, args);
+      writeEventLine(`\x1b[33m🔧 \x1b[1m${toolName}\x1b[0m\x1b[33m ${summary}\x1b[0m`);
+      break;
+    }
+
+    case 'tool_complete': {
+      const toolName = data.toolName as string;
+      writeEventLine(`\x1b[32m✓ ${toolName} complete\x1b[0m`);
+      break;
+    }
+
+    case 'usage': {
+      const inputTokens = data.inputTokens as number;
+      const outputTokens = data.outputTokens as number;
+      const duration = data.duration as number;
+      const durationSec = (duration / 1000).toFixed(1);
+      writeEventLine(`\x1b[90mtokens: ${inputTokens.toLocaleString()} in / ${outputTokens.toLocaleString()} out (${durationSec}s)\x1b[0m`);
+      break;
+    }
+
+    case 'error': {
+      const message = data.message as string;
+      writeEventLine(`\x1b[31m\x1b[1m✗ ${message}\x1b[0m`);
+      break;
+    }
+
+    case 'log': {
+      const message = data.message as string;
+      if (message) {
+        const label = message.replace(/\./g, ' ').replace(/_/g, ' ');
+        writeEventLine(`\x1b[90m${label}\x1b[0m`);
+      }
+      break;
+    }
+
+    case 'files_changed': {
+      refreshFileTree();
+      break;
+    }
+
+    case 'preview_url': {
+      const url = data.url as string;
+      if (url) {
+        loadPreviewUrl(url);
+        switchEditorTab('browser');
+        // Un-collapse preview panel if collapsed
+        const outputPanel = document.getElementById('output-panel');
+        if (outputPanel?.classList.contains('collapsed')) {
+          outputPanel.classList.remove('collapsed');
+        }
+      }
+      break;
+    }
+
+    case 'done': {
+      // Implementation complete - handled by main promise
+      break;
+    }
+  }
+}
+
+function getToolSummary(toolName: string, args?: Record<string, unknown>): string {
+  if (!args) return '';
+
+  // File operations - show path
+  if (toolName.includes('file') || toolName.includes('create') || toolName.includes('edit') || toolName.includes('view')) {
+    const path = args.path || args.file_path || args.filepath || args.file;
+    if (path) return String(path);
+  }
+
+  // Shell/bash - show command
+  if (toolName.includes('bash') || toolName.includes('shell') || toolName.includes('command')) {
+    const cmd = args.command || args.cmd;
+    if (cmd) {
+      const cmdStr = String(cmd);
+      return cmdStr.length > 60 ? cmdStr.substring(0, 57) + '...' : cmdStr;
+    }
+  }
+
+  // Grep/search - show pattern
+  if (toolName.includes('grep') || toolName.includes('search')) {
+    const pattern = args.pattern || args.query;
+    if (pattern) return `"${pattern}"`;
+  }
+
+  // Glob - show pattern
+  if (toolName.includes('glob')) {
+    const pattern = args.pattern;
+    if (pattern) return String(pattern);
+  }
+
+  // Preview browser
+  if (toolName === 'open_in_preview_browser') {
+    const url = args.url;
+    if (url) return String(url);
+  }
+
+  // Default: show first string argument
+  for (const value of Object.values(args)) {
+    if (typeof value === 'string' && value.length < 80) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
+function writeEventLine(line: string): void {
+  outputTerminal?.writeln(line);
+}
+
+interface ImplementEvent {
+  type: string;
+  data: Record<string, unknown>;
 }

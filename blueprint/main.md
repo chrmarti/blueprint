@@ -229,7 +229,7 @@ Write a test using Playwright that starts the app on a folder with a Game of Lif
 - Authentication via GitHub OAuth device flow (no API keys needed).
 - Users sign in with their GitHub account; the GitHub token is passed to the shared `copilot-agent` module which handles Copilot authentication internally.
 - Implementation uses the shared `copilot-agent.ts` module which wraps `@github/copilot-sdk`: it creates a `CopilotClient`, starts the Copilot CLI (`@github/copilot`), creates a streaming session with `environment: { cwd: workspaceFolder }`, and relays events to the renderer. The agent uses its built-in file tools to write output files directly to the workspace.
-- Model selection dropdown, dynamically populated from the Copilot API's available models list (default: `claude-opus-4.5`). When the model list is not yet available (e.g., user not signed in, or network issues), the dropdown should indicate this state to the user rather than appearing empty.
+- Model selection dropdown, dynamically populated via the SDK's `listModels()` (default: `claude-opus-4.6-1m`). When the model list is not yet available (e.g., user not signed in, or network issues), the dropdown should indicate this state to the user rather than appearing empty.
 - Max token limit is auto-filled from the selected model's `capabilities.limits.max_output_tokens` metadata.
 - Temperature slider (default: 0) for controlling output determinism.
 
@@ -336,7 +336,7 @@ The initial bootstrap version is the TypeScript implementation under `/src`, com
 - `xterm.css` copied from `node_modules/@xterm/xterm/css/xterm.css` to `/dist` at build time. Referenced via `<link rel="stylesheet" href="xterm.css">` in `index.html`. This is **critical** — without it, xterm.js's internal helper textarea elements become visible as raw text fields in the terminal and output panels.
 - `main.md` copied from `/blueprint` to `/dist` for reference.
 - Launched via `npm start` (runs `electron .`) which starts the Electron app.
-- The Electron main process and CLI both use the shared `copilot-agent.ts` module for implementation, which wraps the Copilot SDK (`@github/copilot-sdk`) and manages the Copilot CLI (`@github/copilot`) process automatically. The agent writes files directly to the workspace folder. Authentication IPC still uses Node.js `https` directly.
+- The Electron main process and CLI both use the shared `copilot-agent.ts` module for implementation, which wraps the Copilot SDK (`@github/copilot-sdk`) and manages the Copilot CLI (`@github/copilot`) process automatically. The agent writes files directly to the workspace folder. Model listing also uses the SDK (`CopilotClient.listModels()`). Only GitHub user lookup (`GET /user`) uses Node.js `https` directly.
 - The renderer loads `index.html` directly from disk via `loadFile()`.
 - A folder can be passed on the command line: `npm start -- /path/to/folder`.
 - **Runtime dependencies** (must be in `dependencies`, not `devDependencies`): `@github/copilot-sdk`, `@github/copilot`, `@xterm/xterm`, `marked`, `node-pty`. The SDK is bundled into the Electron main process and CLI at build time, but `@github/copilot` must remain in `node_modules` at runtime because its platform-specific native binary (e.g., `@github/copilot-darwin-arm64/copilot`) is spawned as a child process inside the safehouse sandbox. `node-pty` is externalized because it contains native `.node` addons that must be loaded from disk.
@@ -357,3 +357,20 @@ blueprint implement <workspace-folder> [--model <model>] [--no-sandbox]
 - Default model: `claude-opus-4.5`.
 - `--no-sandbox` runs the Copilot CLI directly without the safehouse sandbox. Useful in CI environments where the macOS Seatbelt sandbox may conflict with the runner.
 - On activity timeout (no events for 120 seconds), the CLI automatically retries up to 3 times with a 10-second delay between attempts. Each retry reinitializes the agent with a fresh session. Non-timeout errors fail immediately.
+
+### End-to-End Verification
+
+`test/tictactoe/blueprint.md` is a small self-contained blueprint that produces a single-file HTML tic-tac-toe game. Use it to verify the full pipeline.
+
+#### GUI Verification (Playwright)
+
+A Playwright test launches the Electron app with `test/tictactoe` as the workspace folder, verifies the model picker is populated, clicks Implement, waits for the status to show success, and confirms that `index.html` appears in the file tree.
+
+#### CLI Verification
+
+```
+blueprint clean test/tictactoe
+blueprint implement test/tictactoe
+```
+
+After the agent finishes, `test/tictactoe/index.html` should exist and contain a playable game.

@@ -17,6 +17,24 @@ let workspaceFolder: string | null = null;
 let lastGithubToken: string | null = null;
 let shellProcess: pty.IPty | null = null;
 
+/**
+ * Resolve a GitHub token from GITHUB_TOKEN env var or `gh auth token`.
+ */
+function resolveGitHubToken(): Promise<string | null> {
+  if (process.env.GITHUB_TOKEN) {
+    return Promise.resolve(process.env.GITHUB_TOKEN);
+  }
+  return new Promise((resolve) => {
+    execFile('gh', ['auth', 'token'], { timeout: 5000 }, (err, stdout) => {
+      if (err || !stdout.trim()) {
+        resolve(null);
+      } else {
+        resolve(stdout.trim());
+      }
+    });
+  });
+}
+
 // ── Persist last workspace folder ───────────────────────────────────
 
 function getStatePath(): string {
@@ -101,13 +119,16 @@ function setupIPC(): void {
     saveLastFolder();
     mainWindow?.setTitle(`Blueprint Implementer — ${path.basename(workspaceFolder)}`);
     // Reinitialize agent with new workspace folder so its cwd is correct
-    if (lastGithubToken) {
-      initAgent({
-        githubToken: lastGithubToken,
-        appRoot: app.getAppPath(),
-        workspaceFolder,
-      }).catch(err => console.error('[copilot] Reinit on folder change failed:', err));
-    }
+    resolveGitHubToken().then(token => {
+      if (token) {
+        lastGithubToken = token;
+        initAgent({
+          githubToken: token,
+          appRoot: app.getAppPath(),
+          workspaceFolder: workspaceFolder!,
+        }).catch(err => console.error('[copilot] Reinit on folder change failed:', err));
+      }
+    });
     return workspaceFolder;
   });
 
@@ -175,31 +196,32 @@ function setupIPC(): void {
     return result.canceled ? null : result.filePath;
   });
 
-  // ── API proxy (replaces the HTTP server) ────────────────────────
+  // ── Auth ─────────────────────────────────────────────────────────
 
-  ipcMain.handle('api:authDeviceCode', async (_event, body: string) => {
-    return httpsRequest('POST', 'https://github.com/login/device/code', {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    }, body);
-  });
-
-  ipcMain.handle('api:authToken', async (_event, body: string) => {
-    return httpsRequest('POST', 'https://github.com/login/oauth/access_token', {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    }, body);
-  });
-
-  ipcMain.handle('api:githubUser', async (_event, token: string) => {
-    return httpsRequest('GET', 'https://api.github.com/user', {
+  ipcMain.handle('auth:getUser', async () => {
+    const token = await resolveGitHubToken();
+    if (!token) return null;
+    // Auto-init agent with the resolved token
+    if (!lastGithubToken) {
+      lastGithubToken = token;
+      initAgent({
+        githubToken: token,
+        appRoot: app.getAppPath(),
+        workspaceFolder: workspaceFolder || undefined,
+      }).catch(err => console.error('[copilot] Init on auth failed:', err));
+    }
+    const res = await httpsRequest('GET', 'https://api.github.com/user', {
       'Authorization': `token ${token}`,
       'Accept': 'application/json',
       'User-Agent': 'Blueprint-Implementer/0.1.0',
     }, null);
+    if (res.status >= 400) return null;
+    return JSON.parse(res.body);
   });
 
-  ipcMain.handle('api:copilotToken', async (_event, ghToken: string) => {
+  ipcMain.handle('api:copilotToken', async () => {
+    const ghToken = await resolveGitHubToken();
+    if (!ghToken) return { status: 401, body: 'No GitHub token' };
     return httpsRequest('GET', 'https://api.github.com/copilot_internal/v2/token', {
       'Authorization': `token ${ghToken}`,
       'Accept': 'application/json',
@@ -217,7 +239,9 @@ function setupIPC(): void {
 
   // ── Copilot Agent ────────────────────────────────────────────────
 
-  ipcMain.handle('copilot:init', async (_event, githubToken: string) => {
+  ipcMain.handle('copilot:init', async () => {
+    const githubToken = await resolveGitHubToken();
+    if (!githubToken) return { ok: false, error: 'No GitHub token' };
     lastGithubToken = githubToken;
     return initAgent({
       githubToken,

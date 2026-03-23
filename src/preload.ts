@@ -18,14 +18,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showSaveDialog: (defaultName: string) =>
     ipcRenderer.invoke('dialog:saveFile', defaultName),
 
-  // API proxy (main process makes HTTPS calls)
-  authDeviceCode: (body: string) => ipcRenderer.invoke('api:authDeviceCode', body),
-  authToken: (body: string) => ipcRenderer.invoke('api:authToken', body),
-  githubUser: (token: string) => ipcRenderer.invoke('api:githubUser', token),
-  copilotToken: (ghToken: string) => ipcRenderer.invoke('api:copilotToken', ghToken),
+  // Auth
+  getAuthUser: () => ipcRenderer.invoke('auth:getUser'),
+  copilotToken: () => ipcRenderer.invoke('api:copilotToken'),
   copilotModels: (copilotToken: string) => ipcRenderer.invoke('api:copilotModels', copilotToken),
   // Copilot SDK
-  copilotInit: (githubToken: string) => ipcRenderer.invoke('copilot:init', githubToken),
+  copilotInit: () => ipcRenderer.invoke('copilot:init'),
   copilotImplement: (opts: { model: string; userPrompt: string }) =>
     ipcRenderer.invoke('copilot:implement', opts),
   copilotStop: () => ipcRenderer.invoke('copilot:stop'),

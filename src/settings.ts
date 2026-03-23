@@ -7,7 +7,7 @@ import { loadSettings, saveSettings, loadHistory, exportProject, importProject }
 import type { ImplementationEntry } from './storage';
 import { setOutput } from './implementer';
 import { loadPreview } from './preview';
-import { startSignIn, signOut, isSignedIn, getUser, getCopilotToken, type GitHubUser } from './auth';
+import { isSignedIn, getUser, getCopilotToken, type GitHubUser } from './auth';
 
 let modalEl: HTMLElement;
 let historyDrawerEl: HTMLElement;
@@ -34,15 +34,6 @@ export function initSettings(): void {
   const tempDisplay = document.getElementById('temp-display') as HTMLSpanElement;
   tempSlider?.addEventListener('input', () => {
     tempDisplay.textContent = tempSlider.value;
-  });
-
-  // Auth: sign-in button
-  document.getElementById('sign-in-btn')?.addEventListener('click', handleSignIn);
-  document.getElementById('toolbar-sign-in')?.addEventListener('click', handleSignIn);
-
-  // Auth: sign-out button
-  document.getElementById('sign-out-btn')?.addEventListener('click', () => {
-    signOut();
   });
 
   // Export / Import project
@@ -204,71 +195,35 @@ function saveAndClose(): void {
   editor.style.fontSize = `${s.fontSize}px`;
 }
 
-async function handleSignIn(): Promise<void> {
-  const statusEl = document.getElementById('auth-status') as HTMLElement;
-  const signedOutEl = document.getElementById('auth-signed-out') as HTMLElement;
-  const deviceFlowEl = document.getElementById('auth-device-flow') as HTMLElement;
-
-  // Ensure modal is open
-  if (!modalEl.classList.contains('open')) openModal();
-
-  signedOutEl.style.display = 'none';
-  deviceFlowEl.style.display = 'block';
-
-  try {
-    await startSignIn(
-      (msg) => { statusEl.textContent = msg; },
-      (code, uri) => {
-        const codeDisplay = document.getElementById('device-code-display') as HTMLElement;
-        codeDisplay.textContent = code;
-
-        const copyBtn = document.getElementById('copy-open-github') as HTMLButtonElement;
-        copyBtn.onclick = () => {
-          navigator.clipboard.writeText(code);
-          window.open(uri, '_blank');
-        };
-      },
-    );
-  } catch (err) {
-    statusEl.textContent = (err as Error).message;
-    statusEl.style.color = 'var(--error)';
-    // Show sign-in button again after a delay
-    setTimeout(() => {
-      deviceFlowEl.style.display = 'none';
-      signedOutEl.style.display = 'block';
-      statusEl.style.color = '';
-    }, 3000);
-  }
-}
-
 export function updateAuthUI(user: GitHubUser | null): void {
-  const signedOutEl = document.getElementById('auth-signed-out') as HTMLElement;
-  const deviceFlowEl = document.getElementById('auth-device-flow') as HTMLElement;
-  const signedInEl = document.getElementById('auth-signed-in') as HTMLElement;
+  const authSection = document.querySelector('.auth-section') as HTMLElement;
   const toolbarAvatar = document.getElementById('toolbar-avatar') as HTMLImageElement;
   const toolbarUser = document.getElementById('toolbar-user') as HTMLElement;
-  const toolbarSignIn = document.getElementById('toolbar-sign-in') as HTMLElement;
 
   if (user) {
-    signedOutEl.style.display = 'none';
-    deviceFlowEl.style.display = 'none';
-    signedInEl.style.display = 'block';
-    (document.getElementById('user-avatar') as HTMLImageElement).src = user.avatar_url;
-    (document.getElementById('user-login') as HTMLElement).textContent = user.login;
-
+    if (authSection) {
+      authSection.innerHTML = `
+        <h3>GitHub Account</h3>
+        <div class="auth-user">
+          <img src="${user.avatar_url}" alt="avatar" style="width:32px;height:32px;border-radius:50%;">
+          <span style="font-weight:600;">${user.login}</span>
+        </div>
+        <p style="font-size:12px;color:var(--text-muted);">Using Copilot subscription for LLM access.</p>
+      `;
+    }
     toolbarAvatar.src = user.avatar_url;
     toolbarAvatar.style.display = 'block';
     toolbarUser.textContent = user.login;
     toolbarUser.style.display = 'block';
-    toolbarSignIn.style.display = 'none';
   } else {
-    signedOutEl.style.display = 'block';
-    deviceFlowEl.style.display = 'none';
-    signedInEl.style.display = 'none';
-
+    if (authSection) {
+      authSection.innerHTML = `
+        <h3>GitHub Account</h3>
+        <p style="font-size:13px;color:var(--text-muted);">Not signed in. Set <code>GITHUB_TOKEN</code> or install the <a href="https://cli.github.com" target="_blank">GitHub CLI</a> and run <code>gh auth login</code>.</p>
+      `;
+    }
     toolbarAvatar.style.display = 'none';
     toolbarUser.style.display = 'none';
-    toolbarSignIn.style.display = 'block';
   }
 }
 

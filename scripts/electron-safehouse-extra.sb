@@ -1,6 +1,3 @@
-;; electron-safehouse-extra.sb - Supplementary sandbox profile for Electron
-;; This fills gaps in the upstream electron.sb profile
-
 ;; Allow Electron's MachPortRendezvousServer registration and lookup
 ;; Required for Chromium's child process communication under sandbox-exec
 (allow mach-register

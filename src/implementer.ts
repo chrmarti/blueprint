@@ -1,293 +1,213 @@
-// implementer.ts - Output panel for agent events and streaming for Blueprint Implementer
+// implementer.ts — Output panel (agent events, streaming terminal output)
+
 import { Terminal } from '@xterm/xterm';
-import { getTheme, getSelectedModel, setSelectedModel, addToHistory } from './storage';
-import { getCachedUser } from './auth';
-import { refreshFileTree, getWorkspaceFolder } from './files';
 import { loadPreviewUrl } from './preview';
-import { switchEditorTab } from './editor';
+import { refreshFileTree } from './files';
+import { addHistoryEntry, saveOutput } from './storage';
 
 let outputTerminal: Terminal | null = null;
-let outputContainer: HTMLElement | null = null;
-let modelSelect: HTMLSelectElement | null = null;
-let statusEl: HTMLElement | null = null;
-let isImplementing = false;
 let outputBuffer = '';
+let isImplementing = false;
 
-export async function initImplementer(): Promise<void> {
-  outputContainer = document.getElementById('output-terminal');
-  modelSelect = document.getElementById('model-select') as HTMLSelectElement;
-  statusEl = document.getElementById('implement-status');
+export function initImplementer(): void {
+  const container = document.getElementById('output-terminal') as HTMLElement;
+  if (!container) return;
 
-  // Initialize output terminal
-  if (outputContainer) {
-    outputTerminal = new Terminal({
-      cursorBlink: false,
-      cursorStyle: 'underline',
-      fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace",
-      fontSize: 12,
-      lineHeight: 1.3,
-      theme: getOutputTerminalTheme(),
-      convertEol: true,
-      scrollback: 10000,
-    });
-    outputTerminal.open(outputContainer);
+  outputTerminal = new Terminal({
+    cursorBlink: false,
+    cursorStyle: 'bar',
+    fontFamily: '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace',
+    fontSize: 13,
+    disableStdin: true,
+    convertEol: true,
+    theme: getOutputTheme(),
+  });
+
+  outputTerminal.open(container);
+
+  // Auto-fit on resize
+  const resizeObserver = new ResizeObserver(() => {
+    fitOutputTerminal(container);
+  });
+  resizeObserver.observe(container);
+
+  // Set up implement button
+  const implementBtn = document.getElementById('implement-btn') as HTMLButtonElement;
+  if (implementBtn) {
+    implementBtn.addEventListener('click', startImplementation);
   }
 
-  // Setup Copilot event listeners
+  // Save button
+  const saveBtn = document.getElementById('save-output-btn') as HTMLButtonElement;
+  if (saveBtn) {
+    saveBtn.addEventListener('click', () => {
+      window.electronAPI.saveFileDialog('output.txt', outputBuffer);
+    });
+  }
+
+  // History button
+  const historyBtn = document.getElementById('history-btn') as HTMLButtonElement;
+  if (historyBtn) {
+    historyBtn.addEventListener('click', toggleHistory);
+  }
+
+  // Listen for copilot events
   window.electronAPI.onCopilotChunk((chunk) => {
-    outputTerminal?.write(chunk);
-    outputBuffer += chunk;
+    if (outputTerminal && typeof chunk === 'string') {
+      outputTerminal.write(chunk);
+      outputBuffer += chunk;
+    }
   });
 
   window.electronAPI.onCopilotEvent((event) => {
-    handleCopilotEvent(event);
+    handleImplementEvent(event);
   });
-
-  // Setup model selection
-  if (modelSelect) {
-    modelSelect.addEventListener('change', () => {
-      setSelectedModel(modelSelect!.value);
-    });
-  }
-
-  // Setup buttons
-  document.getElementById('implement-btn')?.addEventListener('click', startImplementation);
-  document.getElementById('stop-btn')?.addEventListener('click', stopImplementation);
-  document.getElementById('save-output-btn')?.addEventListener('click', saveOutput);
-  document.getElementById('clean-btn')?.addEventListener('click', cleanWorkspace);
 }
 
-export async function loadModels(): Promise<void> {
-  if (!modelSelect) return;
+function fitOutputTerminal(container: HTMLElement): void {
+  if (!outputTerminal) return;
 
-  try {
-    const response = await window.electronAPI.copilotListModels();
-    if (response.ok && response.models.length > 0) {
-      const savedModel = getSelectedModel();
+  const core = (outputTerminal as unknown as { _core: { _renderService: { dimensions: { css: { cell: { width: number; height: number } } } } } })._core;
+  if (!core?._renderService?.dimensions?.css?.cell) return;
 
-      modelSelect.innerHTML = response.models
-        .map((m) => `<option value="${m.id}" ${m.id === savedModel ? 'selected' : ''}>${m.name}</option>`)
-        .join('');
+  const cellWidth = core._renderService.dimensions.css.cell.width;
+  const cellHeight = core._renderService.dimensions.css.cell.height;
 
-      // Ensure saved model is selected
-      if (savedModel && response.models.some((m) => m.id === savedModel)) {
-        modelSelect.value = savedModel;
-      }
-    } else {
-      modelSelect.innerHTML = '<option value="">Sign in to load models</option>';
-    }
-  } catch (err) {
-    console.error('Failed to load models:', err);
-    modelSelect.innerHTML = '<option value="">Failed to load models</option>';
-  }
-}
+  if (cellWidth === 0 || cellHeight === 0) return;
 
-function getOutputTerminalTheme(): { background: string; foreground: string; cursor: string } {
-  const theme = getTheme();
-  if (theme === 'dark') {
-    return {
-      background: '#1e1e1e',
-      foreground: '#e0e0e0',
-      cursor: '#e0e0e0',
-    };
-  }
-  return {
-    background: '#ffffff',
-    foreground: '#1a1a1a',
-    cursor: '#1a1a1a',
-  };
-}
+  const cols = Math.max(2, Math.floor(container.clientWidth / cellWidth));
+  const rows = Math.max(1, Math.floor(container.clientHeight / cellHeight));
 
-export function updateOutputTerminalTheme(): void {
-  if (outputTerminal) {
-    outputTerminal.options.theme = getOutputTerminalTheme();
-  }
+  outputTerminal.resize(cols, rows);
 }
 
 async function startImplementation(): Promise<void> {
   if (isImplementing) return;
 
-  const user = getCachedUser();
+  const status = document.getElementById('implement-status') as HTMLElement;
+  const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
+  const model = modelSelect?.value || 'claude-opus-4.6-1m';
+
+  // Check auth
+  const user = await window.electronAPI.getUser();
   if (!user) {
-    setStatus('Not signed in', 'error');
-    return;
-  }
-
-  const workspaceFolder = getWorkspaceFolder();
-  if (!workspaceFolder) {
-    setStatus('No folder open', 'error');
-    return;
-  }
-
-  const model = modelSelect?.value;
-  if (!model) {
-    setStatus('No model selected', 'error');
+    if (status) {
+      status.textContent = 'Not signed in';
+      status.className = 'status error';
+    }
     return;
   }
 
   isImplementing = true;
   outputBuffer = '';
-  outputTerminal?.clear();
-  setStatus('Implementing...', 'running');
+  if (outputTerminal) outputTerminal.clear();
 
-  // Initialize agent
-  const initResult = await window.electronAPI.copilotInit('');
-  if (!initResult.ok) {
-    setStatus(`Init failed: ${initResult.error}`, 'error');
-    isImplementing = false;
-    return;
+  if (status) {
+    status.textContent = 'Implementing...';
+    status.className = 'status implementing';
   }
 
-  // Read blueprint.md for the prompt
-  let blueprintContent = '';
-  try {
-    blueprintContent = await window.electronAPI.readFile(`${workspaceFolder}/blueprint.md`);
-  } catch {
-    setStatus('No blueprint.md found', 'error');
-    isImplementing = false;
-    return;
+  const implementBtn = document.getElementById('implement-btn') as HTMLButtonElement;
+  if (implementBtn) implementBtn.disabled = true;
+
+  // Read blueprint.md content for the user prompt
+  const folder = await window.electronAPI.getWorkspaceFolder();
+  let userPrompt = '';
+  if (folder) {
+    try {
+      userPrompt = await window.electronAPI.readFile(folder + '/blueprint.md');
+    } catch {
+      userPrompt = 'Implement the blueprint in this workspace.';
+    }
   }
 
-  // Prefix with implementation directive
-  const userPrompt = `Implement the following blueprint now. Do not ask for confirmation — start immediately.\n\n${blueprintContent}`;
-
-  // Start implementation
-  const result = await window.electronAPI.copilotImplement({
+  const result = await window.electronAPI.implement({
     model,
     userPrompt,
   });
 
-  if (result.ok) {
-    setStatus('Complete', 'success');
-    // Save to history
-    addToHistory({
-      timestamp: Date.now(),
-      model,
-      prompt: blueprintContent,
-      output: outputBuffer,
-    });
-  } else {
-    setStatus(`Error: ${result.error}`, 'error');
+  isImplementing = false;
+  if (implementBtn) implementBtn.disabled = false;
+
+  if (status) {
+    if (result.ok) {
+      status.textContent = 'Implementation complete';
+      status.className = 'status success';
+    } else {
+      status.textContent = result.error || 'Implementation failed';
+      status.className = 'status error';
+    }
   }
 
-  isImplementing = false;
+  // Save to history
+  addHistoryEntry({
+    id: Date.now().toString(),
+    timestamp: Date.now(),
+    model,
+    status: result.ok ? 'success' : 'error',
+    output: outputBuffer,
+  });
+
+  saveOutput(outputBuffer);
   await refreshFileTree();
 }
 
-async function stopImplementation(): Promise<void> {
-  if (!isImplementing) return;
+function handleImplementEvent(event: ImplementEvent): void {
+  if (!outputTerminal) return;
 
-  await window.electronAPI.copilotStop();
-  setStatus('Stopped', 'error');
-  isImplementing = false;
-}
-
-async function saveOutput(): Promise<void> {
-  const path = await window.electronAPI.saveFile('output.txt');
-  if (path) {
-    await window.electronAPI.writeFile(path, outputBuffer);
-  }
-}
-
-async function cleanWorkspace(): Promise<void> {
-  const workspaceFolder = getWorkspaceFolder();
-  if (!workspaceFolder) {
-    alert('No folder open');
-    return;
-  }
-
-  // First do a dry run
-  const dryResult = await window.electronAPI.cleanWorkspace({ dryRun: true });
-
-  if (!dryResult.ok) {
-    if (dryResult.error?.includes('.blueprintfiles')) {
-      alert('No .blueprintfiles found in the workspace root. Create a .blueprintfiles file listing the files and folders to preserve.');
-    } else {
-      alert(`Clean failed: ${dryResult.error}`);
-    }
-    return;
-  }
-
-  if (!dryResult.deleted || dryResult.deleted.length === 0) {
-    alert('Nothing to clean — workspace matches .blueprintfiles.');
-    return;
-  }
-
-  const confirmMsg = `The following ${dryResult.deleted.length} item(s) will be deleted:\n\n${dryResult.deleted.join('\n')}\n\nProceed?`;
-  if (!confirm(confirmMsg)) {
-    return;
-  }
-
-  // Execute clean
-  const result = await window.electronAPI.cleanWorkspace();
-  if (result.ok) {
-    await refreshFileTree();
-    alert(`Cleaned ${result.deleted?.length || 0} item(s).`);
-  } else {
-    alert(`Clean failed: ${result.error}`);
-  }
-}
-
-function setStatus(text: string, type: 'running' | 'success' | 'error' | ''): void {
-  if (statusEl) {
-    statusEl.textContent = text;
-    statusEl.className = 'output-status ' + type;
-  }
-}
-
-function handleCopilotEvent(event: ImplementEvent): void {
-  const { type, data } = event;
-
-  switch (type) {
+  switch (event.type) {
     case 'tool_start': {
-      const toolName = data.toolName as string;
-      const args = data.arguments as Record<string, unknown> | undefined;
-      const summary = getToolSummary(toolName, args);
-      writeEventLine(`\x1b[33m🔧 \x1b[1m${toolName}\x1b[0m\x1b[33m ${summary}\x1b[0m`);
-      break;
-    }
+      const toolName = event.data.toolName as string;
+      const args = event.data.arguments as Record<string, unknown>;
+      let summary = '';
 
-    case 'tool_complete': {
-      const toolName = data.toolName as string;
-      writeEventLine(`\x1b[32m✓ ${toolName} complete\x1b[0m`);
-      break;
-    }
-
-    case 'usage': {
-      const inputTokens = data.inputTokens as number;
-      const outputTokens = data.outputTokens as number;
-      const duration = data.duration as number;
-      const durationSec = (duration / 1000).toFixed(1);
-      writeEventLine(`\x1b[90mtokens: ${inputTokens.toLocaleString()} in / ${outputTokens.toLocaleString()} out (${durationSec}s)\x1b[0m`);
-      break;
-    }
-
-    case 'error': {
-      const message = data.message as string;
-      writeEventLine(`\x1b[31m\x1b[1m✗ ${message}\x1b[0m`);
-      break;
-    }
-
-    case 'log': {
-      const message = data.message as string;
-      if (message) {
-        const label = message.replace(/\./g, ' ').replace(/_/g, ' ');
-        writeEventLine(`\x1b[90m${label}\x1b[0m`);
+      if (toolName === 'create_file' || toolName === 'write_file' || toolName === 'create') {
+        summary = (args?.path || args?.filePath || '') as string;
+      } else if (toolName === 'bash' || toolName === 'shell') {
+        summary = (args?.command || '') as string;
+      } else if (toolName === 'edit') {
+        summary = (args?.path || args?.filePath || '') as string;
+      } else {
+        const firstVal = Object.values(args || {})[0];
+        summary = typeof firstVal === 'string' ? firstVal : '';
       }
+
+      outputTerminal.writeln(`\x1b[33m🔧 \x1b[1m${toolName}\x1b[22m ${summary}\x1b[0m`);
       break;
     }
-
-    case 'files_changed': {
+    case 'tool_complete': {
+      const name = event.data.toolName as string;
+      outputTerminal.writeln(`\x1b[32m✓ ${name} complete\x1b[0m`);
+      break;
+    }
+    case 'usage': {
+      const inTokens = (event.data.inputTokens as number || 0).toLocaleString();
+      const outTokens = (event.data.outputTokens as number || 0).toLocaleString();
+      const durationMs = event.data.duration as number || 0;
+      const durationSec = (durationMs / 1000).toFixed(1);
+      outputTerminal.writeln(
+        `\x1b[2m\x1b[37mtokens: ${inTokens} in / ${outTokens} out (${durationSec}s)\x1b[0m`
+      );
+      break;
+    }
+    case 'error': {
+      const msg = event.data.message as string;
+      outputTerminal.writeln(`\x1b[31m\x1b[1m✗ ${msg}\x1b[0m`);
+      break;
+    }
+    case 'log': {
+      const logMsg = event.data.message as string;
+      outputTerminal.writeln(`\x1b[2m\x1b[37m${logMsg}\x1b[0m`);
+      break;
+    }
+    case 'files_changed':
       refreshFileTree();
       break;
-    }
-
     case 'preview_url': {
-      const url = data.url as string;
+      const url = event.data.url as string;
       if (url) {
         loadPreviewUrl(url);
-        switchEditorTab('browser');
-        // Un-collapse preview panel if collapsed
+        // Reveal output panel if collapsed
         const outputPanel = document.getElementById('output-panel');
         if (outputPanel?.classList.contains('collapsed')) {
           outputPanel.classList.remove('collapsed');
@@ -295,65 +215,30 @@ function handleCopilotEvent(event: ImplementEvent): void {
       }
       break;
     }
-
-    case 'done': {
-      // Implementation complete - handled by main promise
+    case 'done':
+      outputTerminal.writeln(`\x1b[2m\x1b[37msession complete\x1b[0m`);
       break;
-    }
   }
 }
 
-function getToolSummary(toolName: string, args?: Record<string, unknown>): string {
-  if (!args) return '';
+function toggleHistory(): void {
+  const drawer = document.getElementById('history-drawer') as HTMLElement;
+  if (!drawer) return;
 
-  // File operations - show path
-  if (toolName.includes('file') || toolName.includes('create') || toolName.includes('edit') || toolName.includes('view')) {
-    const path = args.path || args.file_path || args.filepath || args.file;
-    if (path) return String(path);
-  }
-
-  // Shell/bash - show command
-  if (toolName.includes('bash') || toolName.includes('shell') || toolName.includes('command')) {
-    const cmd = args.command || args.cmd;
-    if (cmd) {
-      const cmdStr = String(cmd);
-      return cmdStr.length > 60 ? cmdStr.substring(0, 57) + '...' : cmdStr;
-    }
-  }
-
-  // Grep/search - show pattern
-  if (toolName.includes('grep') || toolName.includes('search')) {
-    const pattern = args.pattern || args.query;
-    if (pattern) return `"${pattern}"`;
-  }
-
-  // Glob - show pattern
-  if (toolName.includes('glob')) {
-    const pattern = args.pattern;
-    if (pattern) return String(pattern);
-  }
-
-  // Preview browser
-  if (toolName === 'open_in_preview_browser') {
-    const url = args.url;
-    if (url) return String(url);
-  }
-
-  // Default: show first string argument
-  for (const value of Object.values(args)) {
-    if (typeof value === 'string' && value.length < 80) {
-      return value;
-    }
-  }
-
-  return '';
+  drawer.classList.toggle('open');
 }
 
-function writeEventLine(line: string): void {
-  outputTerminal?.writeln(line);
+function getOutputTheme(): Record<string, string> {
+  const style = getComputedStyle(document.documentElement);
+  return {
+    background: style.getPropertyValue('--bg-surface').trim() || '#1e1e1e',
+    foreground: style.getPropertyValue('--text').trim() || '#cccccc',
+    cursor: 'transparent',
+  };
 }
 
-interface ImplementEvent {
-  type: string;
-  data: Record<string, unknown>;
+export function updateOutputTheme(): void {
+  if (outputTerminal) {
+    outputTerminal.options.theme = getOutputTheme();
+  }
 }

@@ -102,7 +102,7 @@ See [terminal.md](terminal.md) for the integrated terminal panel, node-pty IPC, 
 
 - `dialog:openFolder` — Opens a native folder picker, returns the selected path.
 - `workspace:getFolder` — Returns the current workspace folder path.
-- `fs:readDir` — Lists directory entries (name, isDirectory), sorted directories-first, excluding dotfiles.
+- `fs:readDir` — Lists directory entries (name, isDirectory), sorted directories-first. Shows dotfiles but excludes `.git`.
 - `fs:readFile` — Reads a file's UTF-8 content.
 - `fs:writeFile` — Writes UTF-8 content to a file (creates parent directories as needed).
 - `fs:delete` — Deletes a file or folder (recursive for directories).
@@ -300,7 +300,12 @@ The test script verifies the following end-to-end scenarios:
 3. **File Tree** — Directory entries render with expand/collapse arrows; files show type-appropriate icons. Clicking a file loads its content into the editor.
 4. **Implement** — Clicking the Implement button triggers the Copilot agent. The status bar shows "Implementing..." and agent events stream into the xterm.js output terminal.
 5. **Implement Completion** — The status element's class changes to `success` (or `error` on failure) and the status text updates. The file tree refreshes to show newly generated files.
-6. **Auth Gate** — When no GitHub token is present, clicking Implement shows "Not signed in" in the status bar without crashing.
+6. **Terminal Echo** — The terminal panel is visible, typing an echo command produces output. After opening a new folder (which triggers a terminal respawn), the echo test is repeated to confirm the terminal still works.
+7. **Auth Gate** — When no GitHub token is present, clicking Implement shows "Not signed in" in the status bar without crashing.
+8. **Model Picker Populated** — After launch, the `#model-select` dropdown has more than one `<option>` and none of them say "unavailable" or "Loading". This confirms that `copilot:listModels` succeeded end-to-end (token resolution → SDK client start → `listModels()` → IPC → renderer).
+9. **Implementation Completes** — Click the Implement button, wait for `#implement-status` to have class `success` (timeout: 10 minutes), and take periodic screenshots while waiting. On success, verify that `index.html` appears in the file tree.
+
+Tests 8–9 require a GitHub token. The test resolves one using the same logic as the app: `GITHUB_TOKEN` env var, falling back to `gh auth token`. If neither is available, the test fails. All tests are in `test/interact.mjs` and use the `test/tictactoe` workspace.
 
 ### Test Implementation
 
@@ -350,21 +355,18 @@ A standalone Node.js script (`implement-cli.ts` → `dist/implement-cli.mjs`) th
 blueprint implement <workspace-folder> [--model <model>] [--no-sandbox]
 ```
 
-- Requires `GITHUB_TOKEN` environment variable (GitHub personal access token with Copilot access).
+- Resolves a GitHub token using the same logic as the Electron app: `GITHUB_TOKEN` env var first, falling back to `gh auth token`. Exits with an error if neither is available.
 - Uses the shared `copilot-agent` module — same `initAgent()`, `implementWithAgent()`, and system prompt as the Electron app.
 - The agent writes output files directly to the workspace folder (the directory containing the input markdown file).
 - Logs agent events (tool calls, progress, usage) to stdout with `[implement]` prefix and emoji markers.
 - Default model: `claude-opus-4.5`.
 - `--no-sandbox` runs the Copilot CLI directly without the safehouse sandbox. Useful in CI environments where the macOS Seatbelt sandbox may conflict with the runner.
 - On activity timeout (no events for 120 seconds), the CLI automatically retries up to 3 times with a 10-second delay between attempts. Each retry reinitializes the agent with a fresh session. Non-timeout errors fail immediately.
+- **Global install**: `npm run install-cli` builds, then uses `npm pack` in `cli/` to create a tarball and installs it globally from that tarball (`npm install -g blueprint-1.0.0.tgz`). This copies the files rather than symlinking — important because `npm install -g ./cli` creates a symlink back to the workspace, which breaks when the workspace is cleaned or moved.
 
 ### End-to-End Verification
 
-`test/tictactoe/blueprint.md` is a small self-contained blueprint that produces a single-file HTML tic-tac-toe game. Use it to verify the full pipeline.
-
-#### GUI Verification (Playwright)
-
-A Playwright test launches the Electron app with `test/tictactoe` as the workspace folder, verifies the model picker is populated, clicks Implement, waits for the status to show success, and confirms that `index.html` appears in the file tree.
+`test/tictactoe/blueprint.md` is a small self-contained blueprint that produces a single-file HTML tic-tac-toe game. All Playwright tests (steps 1–8 above) run against this workspace.
 
 #### CLI Verification
 

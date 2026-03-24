@@ -1,994 +1,963 @@
 <!DOCTYPE html>
-<html lang="en">
+<!--
+ Copyright (c) Microsoft Corporation. All rights reserved.
+ Licensed under the MIT License. See License.txt in the project root for license information.
+-->
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https: http: ws: wss:; frame-src *;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https://avatars.githubusercontent.com data:; frame-src *; connect-src *;">
   <title>Blueprint Implementer</title>
   <link rel="stylesheet" href="xterm.css">
   <style>
-    :root {
-      /* Light theme (default) */
-      --bg-base: #ffffff;
-      --bg-surface: #f5f5f5;
-      --bg-elevated: #e8e8e8;
-      --bg-hover: #e0e0e0;
-      --text: #1a1a1a;
-      --text-muted: #666666;
-      --text-dimmed: #999999;
-      --border: #d0d0d0;
-      --accent: #0066cc;
-      --accent-hover: #0052a3;
-      --success: #28a745;
-      --warning: #f0ad4e;
-      --error: #dc3545;
-      --toolbar-bg: #f8f8f8;
-      --panel-bg: #ffffff;
-      --input-bg: #ffffff;
-      --scrollbar-thumb: #c0c0c0;
-      --scrollbar-track: #f0f0f0;
-    }
-
+    /* ── CSS Custom Properties ── */
+    :root,
     [data-theme="dark"] {
-      --bg-base: #1e1e1e;
+      --bg: #1e1e1e;
       --bg-surface: #252526;
-      --bg-elevated: #2d2d2d;
-      --bg-hover: #3c3c3c;
-      --text: #e0e0e0;
-      --text-muted: #a0a0a0;
-      --text-dimmed: #707070;
-      --border: #404040;
-      --accent: #4da6ff;
-      --accent-hover: #66b3ff;
-      --success: #4caf50;
-      --warning: #ff9800;
-      --error: #f44336;
-      --toolbar-bg: #2d2d30;
-      --panel-bg: #1e1e1e;
-      --input-bg: #3c3c3c;
-      --scrollbar-thumb: #555555;
-      --scrollbar-track: #2d2d2d;
+      --bg-input: #2d2d2d;
+      --bg-hover: #2a2d2e;
+      --bg-active: #37373d;
+      --border: #3c3c3c;
+      --text: #cccccc;
+      --text-muted: #858585;
+      --text-bright: #ffffff;
+      --accent: #007acc;
+      --accent-hover: #1a8ad4;
+      --success: #4ec94e;
+      --warning: #cca700;
+      --error: #f44747;
+      --scrollbar-bg: #1e1e1e;
+      --scrollbar-thumb: #424242;
     }
 
+    [data-theme="light"] {
+      --bg: #ffffff;
+      --bg-surface: #f3f3f3;
+      --bg-input: #ffffff;
+      --bg-hover: #e8e8e8;
+      --bg-active: #d6d6d6;
+      --border: #cccccc;
+      --text: #333333;
+      --text-muted: #717171;
+      --text-bright: #000000;
+      --accent: #007acc;
+      --accent-hover: #0062a3;
+      --success: #2ea043;
+      --warning: #9d6b00;
+      --error: #cb2431;
+      --scrollbar-bg: #f3f3f3;
+      --scrollbar-thumb: #c1c1c1;
+    }
+
+    /* ── Reset & Base ── */
     * {
-      box-sizing: border-box;
       margin: 0;
       padding: 0;
+      box-sizing: border-box;
     }
 
     html, body {
       height: 100%;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-      font-size: 14px;
-      color: var(--text);
-      background: var(--bg-base);
       overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      color: var(--text);
+      background: var(--bg);
     }
 
-    /* Scrollbar styling */
     ::-webkit-scrollbar {
-      width: 10px;
-      height: 10px;
+      width: 8px;
+      height: 8px;
     }
-
     ::-webkit-scrollbar-track {
-      background: var(--scrollbar-track);
+      background: var(--scrollbar-bg);
     }
-
     ::-webkit-scrollbar-thumb {
       background: var(--scrollbar-thumb);
-      border-radius: 5px;
+      border-radius: 4px;
     }
 
-    ::-webkit-scrollbar-thumb:hover {
-      background: var(--text-muted);
-    }
-
-    /* Layout */
-    .app-container {
+    /* ── App Shell ── */
+    #app {
       display: flex;
       flex-direction: column;
-      height: 100vh;
+      height: 100%;
     }
 
-    /* Toolbar */
-    .toolbar {
+    /* ── Toolbar ── */
+    #toolbar {
       display: flex;
       align-items: center;
-      gap: 12px;
-      padding: 8px 16px;
-      background: var(--toolbar-bg);
+      gap: 8px;
+      padding: 4px 12px;
+      background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
+      height: 36px;
       flex-shrink: 0;
     }
 
-    .toolbar-title {
+    #toolbar .app-title {
       font-weight: 600;
-      font-size: 15px;
-      color: var(--text);
+      font-size: 13px;
+      color: var(--text-bright);
+      white-space: nowrap;
     }
 
-    .toolbar-separator {
+    #toolbar .separator {
       width: 1px;
-      height: 20px;
+      height: 18px;
       background: var(--border);
     }
 
-    .toolbar-folder {
-      display: flex;
-      align-items: center;
-      gap: 6px;
+    #folder-name {
       color: var(--text-muted);
-      font-size: 13px;
-    }
-
-    .toolbar-folder-name {
-      color: var(--text);
-      font-weight: 500;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 200px;
     }
 
     .toolbar-spacer {
       flex: 1;
     }
 
-    .toolbar-button {
+    #user-info {
       display: flex;
       align-items: center;
-      justify-content: center;
       gap: 6px;
-      padding: 6px 12px;
-      background: var(--bg-elevated);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .avatar {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+    }
+
+    .toolbar-btn {
+      background: none;
       border: 1px solid var(--border);
-      border-radius: 6px;
       color: var(--text);
-      font-size: 13px;
+      padding: 3px 10px;
+      border-radius: 4px;
       cursor: pointer;
-      transition: background 0.15s, border-color 0.15s;
+      font-size: 12px;
+      white-space: nowrap;
     }
-
-    .toolbar-button:hover {
+    .toolbar-btn:hover {
       background: var(--bg-hover);
-      border-color: var(--text-muted);
     }
 
-    .toolbar-button.primary {
+    .toolbar-icon-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 14px;
+      padding: 2px 4px;
+      border-radius: 3px;
+    }
+    .toolbar-icon-btn:hover {
+      color: var(--text);
+      background: var(--bg-hover);
+    }
+
+    .implement-btn {
       background: var(--accent);
-      border-color: var(--accent);
-      color: white;
+      color: #fff;
+      border: none;
+      padding: 3px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
     }
-
-    .toolbar-button.primary:hover {
+    .implement-btn:hover {
       background: var(--accent-hover);
-      border-color: var(--accent-hover);
     }
-
-    .toolbar-button.danger {
-      color: var(--error);
-    }
-
-    .toolbar-button.danger:hover {
-      background: var(--error);
-      color: white;
-      border-color: var(--error);
-    }
-
-    .toolbar-button:disabled {
+    .implement-btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
     }
 
-    .user-info {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .user-avatar {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-    }
-
-    .user-login {
-      font-size: 13px;
-      color: var(--text-muted);
-    }
-
-    /* Main content area */
-    .main-content {
+    /* ── Main Content Area ── */
+    #content {
       display: flex;
       flex: 1;
       overflow: hidden;
     }
 
-    /* Panels */
-    .panel {
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 240px;
+      min-width: 150px;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border);
       display: flex;
       flex-direction: column;
-      background: var(--panel-bg);
-      border-right: 1px solid var(--border);
       overflow: hidden;
-    }
-
-    .panel:last-child {
-      border-right: none;
-    }
-
-    .panel-header {
-      display: flex;
-      align-items: center;
-      padding: 8px 12px;
-      background: var(--bg-surface);
-      border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
-
-    .panel-title {
-      font-weight: 600;
-      font-size: 13px;
-      color: var(--text);
-    }
-
-    .panel-body {
-      flex: 1;
-      overflow: auto;
-    }
-
-    /* Sidebar */
-    #sidebar {
-      width: 260px;
-      min-width: 180px;
+    #sidebar.collapsed {
+      display: none;
     }
 
     .sidebar-tabs {
       display: flex;
-      background: var(--bg-surface);
+      align-items: center;
       border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      flex-shrink: 0;
     }
 
     .sidebar-tab {
-      flex: 1;
-      padding: 8px 12px;
-      font-size: 12px;
-      font-weight: 500;
-      text-align: center;
+      padding: 6px 12px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
       color: var(--text-muted);
-      background: transparent;
-      border: none;
-      border-bottom: 2px solid transparent;
       cursor: pointer;
-      transition: color 0.15s, border-color 0.15s;
+      border-bottom: 2px solid transparent;
+      user-select: none;
     }
-
     .sidebar-tab:hover {
       color: var(--text);
     }
-
     .sidebar-tab.active {
-      color: var(--accent);
+      color: var(--text-bright);
       border-bottom-color: var(--accent);
     }
 
     .sidebar-actions {
       display: flex;
-      gap: 4px;
+      align-items: center;
       margin-left: auto;
+      gap: 2px;
       padding-right: 4px;
     }
 
-    .sidebar-action {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 24px;
-      height: 24px;
-      background: transparent;
+    .sidebar-action-btn {
+      background: none;
       border: none;
-      border-radius: 4px;
       color: var(--text-muted);
-      font-size: 14px;
       cursor: pointer;
-      transition: background 0.15s, color 0.15s;
+      font-size: 13px;
+      padding: 4px 5px;
+      border-radius: 3px;
+      line-height: 1;
     }
-
-    .sidebar-action:hover {
-      background: var(--bg-hover);
+    .sidebar-action-btn:hover {
       color: var(--text);
+      background: var(--bg-hover);
     }
 
-    .sidebar-content {
+    #files-pane, #git-pane {
       flex: 1;
-      overflow: auto;
+      overflow-y: auto;
+      padding: 4px 0;
+    }
+    #git-pane {
+      display: none;
     }
 
-    /* File tree */
-    .file-tree {
-      padding: 8px 0;
-    }
-
-    .file-entry {
+    /* ── File Tree ── */
+    .tree-entry {
       display: flex;
       align-items: center;
-      padding: 4px 12px;
+      gap: 4px;
+      padding: 3px 8px;
       cursor: pointer;
-      color: var(--text);
       font-size: 13px;
-      transition: background 0.1s;
+      user-select: none;
+      white-space: nowrap;
     }
-
-    .file-entry:hover {
+    .tree-entry:hover {
       background: var(--bg-hover);
     }
-
-    .file-entry.selected {
-      background: var(--accent);
-      color: white;
+    .tree-entry.selected {
+      background: var(--bg-active);
+      color: var(--text-bright);
     }
 
-    .file-entry.directory-selected {
-      background: var(--bg-elevated);
-    }
-
-    .file-entry-icon {
-      width: 20px;
+    .tree-arrow {
+      width: 12px;
+      font-size: 10px;
+      color: var(--text-muted);
+      flex-shrink: 0;
       text-align: center;
-      margin-right: 6px;
+    }
+
+    .tree-icon {
+      font-size: 14px;
       flex-shrink: 0;
     }
 
-    .file-entry-name {
-      flex: 1;
+    .tree-name {
       overflow: hidden;
       text-overflow: ellipsis;
-      white-space: nowrap;
     }
 
-    .file-entry-arrow {
-      width: 16px;
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 10px;
-    }
-
-    .file-children {
-      padding-left: 16px;
+    .tree-children {
+      /* children container for nested dirs */
     }
 
     .inline-input {
-      flex: 1;
+      display: block;
+      width: calc(100% - 16px);
+      margin: 2px 8px;
       padding: 2px 6px;
       font-size: 13px;
       font-family: inherit;
-      background: var(--input-bg);
+      background: var(--bg-input);
+      color: var(--text);
       border: 1px solid var(--accent);
       border-radius: 3px;
-      color: var(--text);
       outline: none;
     }
 
-    /* Git status */
-    .git-status-list {
-      padding: 8px 0;
-    }
-
+    /* ── Git Tab ── */
     .git-entry {
       display: flex;
       align-items: center;
+      gap: 8px;
       padding: 4px 12px;
       font-size: 13px;
     }
 
-    .git-status-badge {
+    .git-badge {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 20px;
-      height: 20px;
-      margin-right: 8px;
+      width: 18px;
+      height: 18px;
+      border-radius: 3px;
       font-size: 11px;
       font-weight: 600;
-      border-radius: 3px;
+      color: #fff;
+      background: var(--text-muted);
+      flex-shrink: 0;
     }
+    .git-badge.git-modified { background: var(--warning); }
+    .git-badge.git-added { background: var(--success); }
+    .git-badge.git-deleted { background: var(--error); }
+    .git-badge.git-untracked { background: var(--text-muted); }
+    .git-badge.git-renamed { background: var(--warning); }
 
-    .git-status-badge.modified { background: var(--warning); color: #1a1a1a; }
-    .git-status-badge.added { background: var(--success); color: white; }
-    .git-status-badge.deleted { background: var(--error); color: white; }
-    .git-status-badge.untracked { background: var(--text-dimmed); color: white; }
-    .git-status-badge.renamed { background: var(--warning); color: #1a1a1a; }
-
-    .git-file-path {
-      flex: 1;
+    .git-file {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      color: var(--text-muted);
     }
 
-    .empty-state {
-      padding: 24px;
-      text-align: center;
+    .git-empty {
+      padding: 16px 12px;
       color: var(--text-muted);
-      font-size: 13px;
+      font-size: 12px;
     }
 
-    /* Editor panel */
+    /* ── Drag Handles ── */
+    .drag-handle {
+      width: 4px;
+      cursor: col-resize;
+      background: transparent;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    .drag-handle:hover,
+    .drag-handle:active {
+      background: var(--accent);
+    }
+    .drag-handle.hidden {
+      display: none;
+    }
+
+    .drag-handle-h {
+      height: 4px;
+      cursor: row-resize;
+      background: transparent;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    .drag-handle-h:hover,
+    .drag-handle-h:active {
+      background: var(--accent);
+    }
+
+    /* ── Editor Panel ── */
     #editor-panel {
       flex: 1;
-      min-width: 300px;
       display: flex;
       flex-direction: column;
+      min-width: 200px;
+      overflow: hidden;
     }
 
     .editor-tabs {
       display: flex;
-      background: var(--bg-surface);
+      align-items: center;
       border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      flex-shrink: 0;
     }
 
     .editor-tab {
-      padding: 8px 16px;
-      font-size: 13px;
-      font-weight: 500;
+      padding: 6px 14px;
+      font-size: 12px;
       color: var(--text-muted);
-      background: transparent;
-      border: none;
-      border-bottom: 2px solid transparent;
       cursor: pointer;
-      transition: color 0.15s, border-color 0.15s;
+      border-bottom: 2px solid transparent;
+      user-select: none;
     }
-
     .editor-tab:hover {
       color: var(--text);
     }
-
     .editor-tab.active {
-      color: var(--accent);
+      color: var(--text-bright);
       border-bottom-color: var(--accent);
     }
 
-    .editor-content {
+    #current-file-label {
+      margin-left: auto;
+      padding-right: 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .editor-body {
       flex: 1;
       display: flex;
       flex-direction: column;
       overflow: hidden;
     }
 
-    .tab-content {
-      display: none;
+    /* ── Edit Pane ── */
+    #edit-pane {
       flex: 1;
+      display: flex;
       flex-direction: column;
       overflow: hidden;
     }
 
-    .tab-content.active {
-      display: flex;
-    }
-
-    /* Editor textarea */
     #editor-textarea {
       flex: 1;
-      padding: 16px;
-      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      width: 100%;
+      resize: none;
+      border: none;
+      outline: none;
+      padding: 12px 16px;
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
       font-size: 14px;
       line-height: 1.6;
       color: var(--text);
-      background: var(--panel-bg);
-      border: none;
-      outline: none;
-      resize: none;
-      overflow: auto;
+      background: var(--bg);
+      tab-size: 2;
     }
 
-    /* Browser tab */
-    .browser-container {
-      display: flex;
-      flex-direction: column;
+    /* ── Browser Pane ── */
+    #browser-pane {
       flex: 1;
+      display: none;
+      flex-direction: column;
       overflow: hidden;
     }
 
-    .browser-address-bar {
+    .address-bar-container {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
+      gap: 6px;
+      padding: 4px 8px;
       background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
     }
 
-    .browser-address-input {
+    #address-bar {
       flex: 1;
-      padding: 6px 10px;
-      font-size: 13px;
+      padding: 4px 8px;
+      font-size: 12px;
       font-family: inherit;
-      background: var(--input-bg);
+      background: var(--bg-input);
+      color: var(--text);
       border: 1px solid var(--border);
       border-radius: 4px;
-      color: var(--text);
       outline: none;
     }
-
-    .browser-address-input:focus {
+    #address-bar:focus {
       border-color: var(--accent);
     }
 
-    .browser-go-button {
-      padding: 6px 12px;
-      font-size: 13px;
-      background: var(--bg-elevated);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      color: var(--text);
-      cursor: pointer;
-    }
-
-    .browser-go-button:hover {
-      background: var(--bg-hover);
-    }
-
-    #browser-iframe {
+    #preview-iframe {
       flex: 1;
-      width: 100%;
       border: none;
-      background: white;
+      background: #fff;
     }
 
-    /* Terminal panel */
-    .terminal-container {
+    /* ── Terminal Panel ── */
+    #terminal-panel {
       height: 200px;
       min-height: 60px;
       display: flex;
       flex-direction: column;
+      flex-shrink: 0;
       border-top: 1px solid var(--border);
     }
 
     .terminal-header {
       display: flex;
       align-items: center;
-      padding: 4px 12px;
+      padding: 3px 10px;
       background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
     }
 
-    .terminal-title {
-      font-size: 12px;
-      font-weight: 500;
+    .terminal-header .terminal-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
       color: var(--text-muted);
     }
 
-    .terminal-body {
+    #terminal-container {
       flex: 1;
       overflow: hidden;
+      background: var(--bg);
     }
 
-    #terminal {
-      height: 100%;
-    }
-
-    /* Output panel */
+    /* ── Output Panel ── */
     #output-panel {
       width: 400px;
-      min-width: 280px;
+      min-width: 200px;
+      background: var(--bg-surface);
       border-left: 1px solid var(--border);
-      border-right: none;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    #output-panel.collapsed {
+      display: none;
     }
 
     .output-header {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
+      gap: 6px;
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      flex-shrink: 0;
+    }
+
+    .output-header .output-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+    }
+
+    .output-header .output-spacer {
+      flex: 1;
+    }
+
+    .output-header-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 13px;
+      padding: 2px 4px;
+      border-radius: 3px;
+    }
+    .output-header-btn:hover {
+      color: var(--text);
+      background: var(--bg-hover);
+    }
+
+    .output-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .model-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
       background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
     }
 
-    .output-title {
-      font-weight: 600;
-      font-size: 13px;
+    .model-bar label {
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    #model-select {
+      flex: 1;
+      padding: 3px 6px;
+      font-size: 12px;
+      background: var(--bg-input);
       color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      outline: none;
+      min-width: 0;
     }
 
-    .output-status {
+    #implement-status {
+      padding: 4px 10px;
       font-size: 12px;
       color: var(--text-muted);
-      margin-left: auto;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      min-height: 24px;
     }
-
-    .output-status.success {
+    #implement-status.implementing {
+      color: var(--accent);
+    }
+    #implement-status.success {
       color: var(--success);
     }
-
-    .output-status.error {
+    #implement-status.error {
       color: var(--error);
     }
 
-    .output-status.running {
-      color: var(--warning);
+    #output-terminal {
+      flex: 1;
+      overflow: hidden;
     }
 
-    .output-controls {
+    /* ── History Drawer ── */
+    #history-drawer {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 320px;
+      height: 100%;
+      background: var(--bg-surface);
+      border-left: 1px solid var(--border);
+      transform: translateX(100%);
+      transition: transform 0.2s ease;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+    }
+    #history-drawer.open {
+      transform: translateX(0);
+    }
+
+    .history-header {
+      padding: 10px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-bright);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .history-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 0;
+    }
+
+    .history-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+    }
+    .history-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .history-time {
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .history-model {
+      color: var(--text);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .history-status {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .history-status.success { color: var(--success); }
+    .history-status.error { color: var(--error); }
+
+    /* ── Settings Modal ── */
+    #settings-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      background: rgba(0, 0, 0, 0.5);
+      align-items: center;
+      justify-content: center;
+    }
+    #settings-modal.open {
+      display: flex;
+    }
+
+    .settings-dialog {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      width: 420px;
+      max-height: 80vh;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    .settings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .settings-header h2 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-bright);
+    }
+
+    .settings-close-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 18px;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    .settings-close-btn:hover {
+      color: var(--text);
+      background: var(--bg-hover);
+    }
+
+    .settings-group {
+      margin-bottom: 16px;
+    }
+
+    .settings-group label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    .settings-group select,
+    .settings-group input[type="number"],
+    .settings-group input[type="range"] {
+      width: 100%;
+      padding: 4px 8px;
+      font-size: 13px;
+      background: var(--bg-input);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      outline: none;
+    }
+    .settings-group select:focus,
+    .settings-group input:focus {
+      border-color: var(--accent);
+    }
+
+    .settings-group .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .settings-group .slider-row input[type="range"] {
+      flex: 1;
+    }
+
+    .settings-group .slider-value {
+      font-size: 12px;
+      color: var(--text);
+      min-width: 24px;
+      text-align: right;
+    }
+
+    .settings-actions {
       display: flex;
       gap: 8px;
-      padding: 8px 12px;
-      background: var(--bg-surface);
-      border-bottom: 1px solid var(--border);
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
     }
 
-    .output-controls select,
-    .output-controls input {
-      padding: 4px 8px;
-      font-size: 12px;
-      background: var(--input-bg);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      color: var(--text);
-    }
-
-    .output-controls select {
-      min-width: 160px;
-    }
-
-    .output-controls label {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-
-    .output-terminal {
+    .settings-actions button {
       flex: 1;
-      overflow: hidden;
-    }
-
-    #output-terminal {
-      height: 100%;
-    }
-
-    .output-actions {
-      display: flex;
-      gap: 4px;
-    }
-
-    .output-action {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 28px;
-      height: 28px;
-      background: transparent;
-      border: none;
+      padding: 6px 12px;
+      font-size: 12px;
       border-radius: 4px;
-      color: var(--text-muted);
-      font-size: 14px;
       cursor: pointer;
-    }
-
-    .output-action:hover {
-      background: var(--bg-hover);
-      color: var(--text);
-    }
-
-    /* Drag handles */
-    .drag-handle {
-      width: 5px;
-      cursor: col-resize;
-      background: transparent;
-      transition: background 0.15s;
-      flex-shrink: 0;
-    }
-
-    .drag-handle:hover,
-    .drag-handle.dragging {
-      background: var(--accent);
-    }
-
-    .drag-handle-h {
-      height: 5px;
-      cursor: row-resize;
-      background: transparent;
-      transition: background 0.15s;
-      flex-shrink: 0;
-    }
-
-    .drag-handle-h:hover,
-    .drag-handle-h.dragging {
-      background: var(--accent);
-    }
-
-    /* Settings modal */
-    .modal-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.5);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
-    }
-
-    .modal-overlay.hidden {
-      display: none;
-    }
-
-    .modal {
-      width: 480px;
-      max-height: 80vh;
-      background: var(--panel-bg);
-      border-radius: 8px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-      overflow: hidden;
-    }
-
-    .modal-header {
-      display: flex;
-      align-items: center;
-      padding: 12px 16px;
-      background: var(--bg-surface);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .modal-title {
-      font-weight: 600;
-      font-size: 15px;
-      color: var(--text);
-    }
-
-    .modal-close {
-      margin-left: auto;
-      width: 28px;
-      height: 28px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: transparent;
-      border: none;
-      border-radius: 4px;
-      color: var(--text-muted);
-      font-size: 18px;
-      cursor: pointer;
-    }
-
-    .modal-close:hover {
-      background: var(--bg-hover);
-      color: var(--text);
-    }
-
-    .modal-body {
-      padding: 16px;
-      overflow-y: auto;
-    }
-
-    .settings-section {
-      margin-bottom: 20px;
-    }
-
-    .settings-section:last-child {
-      margin-bottom: 0;
-    }
-
-    .settings-label {
-      display: block;
-      margin-bottom: 8px;
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text);
-    }
-
-    .settings-row {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 12px;
-    }
-
-    .settings-input {
-      flex: 1;
-      padding: 8px 12px;
-      font-size: 13px;
-      background: var(--input-bg);
       border: 1px solid var(--border);
-      border-radius: 4px;
+      background: var(--bg-input);
       color: var(--text);
     }
-
-    .settings-select {
-      padding: 8px 12px;
-      font-size: 13px;
-      background: var(--input-bg);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      color: var(--text);
-      min-width: 200px;
-    }
-
-    .settings-button {
-      padding: 8px 16px;
-      font-size: 13px;
-      background: var(--bg-elevated);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      color: var(--text);
-      cursor: pointer;
-    }
-
-    .settings-button:hover {
+    .settings-actions button:hover {
       background: var(--bg-hover);
     }
 
-    .settings-button.primary {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: white;
-    }
-
-    .settings-button.primary:hover {
-      background: var(--accent-hover);
-    }
-
-    /* Collapsed panels */
-    .panel.collapsed {
-      width: 32px !important;
-      min-width: 32px !important;
-    }
-
-    .panel.collapsed .panel-body,
-    .panel.collapsed .sidebar-content,
-    .panel.collapsed .editor-content,
-    .panel.collapsed .output-terminal,
-    .panel.collapsed .output-controls {
-      display: none;
-    }
-
-    .panel.collapsed .panel-header,
-    .panel.collapsed .sidebar-tabs,
-    .panel.collapsed .editor-tabs,
-    .panel.collapsed .output-header {
-      writing-mode: vertical-rl;
-      text-orientation: mixed;
-      padding: 12px 8px;
-      justify-content: center;
-    }
+    /* ── Utilities ── */
+    .text-muted { color: var(--text-muted); }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
-  <div class="app-container">
+  <div id="app">
     <!-- Toolbar -->
-    <div class="toolbar">
-      <span class="toolbar-title">Blueprint Implementer</span>
-      <div class="toolbar-separator"></div>
-      <button class="toolbar-button" id="open-folder-btn" title="Open Folder (Cmd+Shift+O)">📂 Open</button>
-      <div class="toolbar-folder" id="folder-display">
-        <span>No folder open</span>
-      </div>
+    <div id="toolbar">
+      <span class="app-title">Blueprint</span>
+      <div class="separator"></div>
+      <button id="open-folder-btn" class="toolbar-btn" title="Open Folder">📂 Open</button>
+      <span id="folder-name"></span>
+      <div class="separator"></div>
+      <button id="implement-btn" class="implement-btn" title="Implement (Cmd+B)">▶ Implement</button>
+      <button id="clean-btn" class="toolbar-btn" title="Clean workspace">🗑 Clean</button>
       <div class="toolbar-spacer"></div>
-      <button class="toolbar-button primary" id="implement-btn" title="Implement (Cmd+B)">▶ Implement</button>
-      <button class="toolbar-button danger" id="clean-btn" title="Clean workspace">🗑 Clean</button>
-      <div class="toolbar-separator"></div>
-      <div class="user-info" id="user-info">
-        <span class="user-login">Not signed in</span>
-      </div>
-      <button class="toolbar-button" id="settings-btn" title="Settings">⚙️</button>
+      <div id="user-info"></div>
+      <button id="toggle-sidebar" class="toolbar-icon-btn" title="Toggle Sidebar">☰</button>
+      <button id="toggle-output" class="toolbar-icon-btn" title="Toggle Output">⧉</button>
+      <button id="settings-btn" class="toolbar-icon-btn" title="Settings">⚙</button>
     </div>
 
-    <!-- Main content -->
-    <div class="main-content">
+    <!-- Main Content -->
+    <div id="content">
       <!-- Sidebar -->
-      <div class="panel" id="sidebar">
+      <div id="sidebar">
         <div class="sidebar-tabs">
-          <button class="sidebar-tab active" data-tab="files">Files</button>
-          <button class="sidebar-tab" data-tab="git">Git</button>
+          <div class="sidebar-tab active" data-sidebar-tab="files">Files</div>
+          <div class="sidebar-tab" data-sidebar-tab="git">Git</div>
           <div class="sidebar-actions">
-            <button class="sidebar-action" id="new-file-btn" title="New File">📄</button>
-            <button class="sidebar-action" id="new-folder-btn" title="New Folder">📁</button>
-            <button class="sidebar-action" id="refresh-btn" title="Refresh">🔄</button>
-            <button class="sidebar-action" id="delete-btn" title="Delete">🗑️</button>
+            <button id="new-file-btn" class="sidebar-action-btn" title="New File">📄</button>
+            <button id="new-folder-btn" class="sidebar-action-btn" title="New Folder">📁</button>
+            <button id="refresh-btn" class="sidebar-action-btn" title="Refresh">🔄</button>
+            <button id="delete-btn" class="sidebar-action-btn" title="Delete">🗑️</button>
           </div>
         </div>
-        <div class="sidebar-content">
-          <div class="tab-content active" data-tab="files">
-            <div class="file-tree" id="file-tree">
-              <div class="empty-state">No folder open</div>
-            </div>
-          </div>
-          <div class="tab-content" data-tab="git">
-            <div class="git-status-list" id="git-status">
-              <div class="empty-state">No changes</div>
-            </div>
-          </div>
+        <div id="files-pane">
+          <div id="file-tree"></div>
+        </div>
+        <div id="git-pane">
+          <div id="git-list"></div>
         </div>
       </div>
 
-      <div class="drag-handle" id="drag-handle-left"></div>
+      <!-- Left Drag Handle -->
+      <div id="drag-handle-left" class="drag-handle"></div>
 
-      <!-- Editor panel -->
-      <div class="panel" id="editor-panel">
+      <!-- Editor Panel -->
+      <div id="editor-panel">
         <div class="editor-tabs">
-          <button class="editor-tab active" data-tab="edit">Edit</button>
-          <button class="editor-tab" data-tab="browser">Browser</button>
+          <div class="editor-tab active" data-tab="edit">Edit</div>
+          <div class="editor-tab" data-tab="browser">Browser</div>
+          <span id="current-file-label"></span>
         </div>
-        <div class="editor-content">
-          <div class="tab-content active" data-tab="edit">
-            <textarea id="editor-textarea" placeholder="Open a file to edit..."></textarea>
+        <div class="editor-body">
+          <!-- Edit Pane -->
+          <div id="edit-pane">
+            <textarea id="editor-textarea" spellcheck="false" placeholder="Open a file to edit..."></textarea>
           </div>
-          <div class="tab-content" data-tab="browser">
-            <div class="browser-container">
-              <div class="browser-address-bar">
-                <input type="text" class="browser-address-input" id="browser-url" placeholder="Enter URL...">
-                <button class="browser-go-button" id="browser-go">Go</button>
-              </div>
-              <iframe id="browser-iframe" sandbox="allow-scripts allow-modals allow-same-origin allow-forms"></iframe>
+          <!-- Browser Pane -->
+          <div id="browser-pane">
+            <div class="address-bar-container">
+              <input id="address-bar" type="text" placeholder="Enter URL...">
             </div>
+            <iframe id="preview-iframe" sandbox="allow-scripts allow-modals"></iframe>
           </div>
-        </div>
-        <div class="drag-handle-h" id="drag-handle-terminal"></div>
-        <div class="terminal-container" id="terminal-container">
-          <div class="terminal-header">
-            <span class="terminal-title">Terminal</span>
-          </div>
-          <div class="terminal-body">
-            <div id="terminal"></div>
+          <!-- Terminal Drag Handle -->
+          <div id="drag-handle-terminal" class="drag-handle-h"></div>
+          <!-- Terminal Panel -->
+          <div id="terminal-panel">
+            <div class="terminal-header">
+              <span class="terminal-title">Terminal</span>
+            </div>
+            <div id="terminal-container"></div>
           </div>
         </div>
       </div>
 
-      <div class="drag-handle" id="drag-handle-right"></div>
+      <!-- Right Drag Handle -->
+      <div id="drag-handle-right" class="drag-handle"></div>
 
-      <!-- Output panel -->
-      <div class="panel" id="output-panel">
+      <!-- Output Panel -->
+      <div id="output-panel" style="position: relative;">
         <div class="output-header">
           <span class="output-title">Output</span>
-          <span class="output-status" id="implement-status"></span>
-          <div class="output-actions">
-            <button class="output-action" id="save-output-btn" title="Save Output">💾</button>
-            <button class="output-action" id="stop-btn" title="Stop">⏹</button>
+          <span class="output-spacer"></span>
+          <button id="save-output-btn" class="output-header-btn" title="Save Output">💾</button>
+          <button id="history-btn" class="output-header-btn" title="History">📋</button>
+        </div>
+        <div class="output-body">
+          <div class="model-bar">
+            <label for="model-select">Model</label>
+            <select id="model-select">
+              <option value="">Loading models...</option>
+            </select>
           </div>
-        </div>
-        <div class="output-controls">
-          <select id="model-select">
-            <option value="">Loading models...</option>
-          </select>
-        </div>
-        <div class="output-terminal">
+          <div id="implement-status"></div>
           <div id="output-terminal"></div>
+        </div>
+        <!-- History Drawer -->
+        <div id="history-drawer">
+          <div class="history-header">History</div>
+          <div class="history-list"></div>
         </div>
       </div>
     </div>
   </div>
 
   <!-- Settings Modal -->
-  <div class="modal-overlay hidden" id="settings-modal">
-    <div class="modal">
-      <div class="modal-header">
-        <span class="modal-title">Settings</span>
-        <button class="modal-close" id="settings-close">×</button>
+  <div id="settings-modal">
+    <div class="settings-dialog">
+      <div class="settings-header">
+        <h2>Settings</h2>
+        <button id="settings-close-btn" class="settings-close-btn">✕</button>
       </div>
-      <div class="modal-body">
-        <div class="settings-section">
-          <label class="settings-label">Theme</label>
-          <div class="settings-row">
-            <select class="settings-select" id="theme-select">
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-            </select>
-          </div>
+      <div class="settings-group">
+        <label for="theme-toggle">Theme</label>
+        <select id="theme-toggle">
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </div>
+      <div class="settings-group">
+        <label for="font-size-input">Font Size</label>
+        <input id="font-size-input" type="number" min="10" max="24" value="14">
+      </div>
+      <div class="settings-group">
+        <label>Temperature</label>
+        <div class="slider-row">
+          <input id="temperature-slider" type="range" min="0" max="1" step="0.1" value="0">
+          <span id="temperature-value" class="slider-value">0</span>
         </div>
-        <div class="settings-section">
-          <label class="settings-label">Editor Font Size</label>
-          <div class="settings-row">
-            <input type="number" class="settings-input" id="font-size-input" value="14" min="10" max="24">
-          </div>
-        </div>
-        <div class="settings-section">
-          <label class="settings-label">Export/Import</label>
-          <div class="settings-row">
-            <button class="settings-button" id="export-btn">Export State</button>
-            <button class="settings-button" id="import-btn">Import State</button>
-          </div>
-        </div>
+      </div>
+      <div class="settings-actions">
+        <button id="export-btn">Export State</button>
+        <button id="import-btn">Import State</button>
       </div>
     </div>
   </div>

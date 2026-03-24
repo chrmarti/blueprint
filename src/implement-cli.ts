@@ -1,320 +1,249 @@
 #!/usr/bin/env node
-// implement-cli.ts - Standalone CLI implement tool for Blueprint Implementer
+// implement-cli.ts — Standalone CLI implement tool (no Electron)
 
-import * as fs from 'fs';
 import * as path from 'path';
-import { fileURLToPath } from 'url';
-import { initAgent, implementWithAgent, stopAgent, listModels as agentListModels } from './copilot-agent';
+import * as fs from 'fs';
+import { execFileSync } from 'child_process';
+import { initAgent, implementWithAgent, stopAgent, listModels } from './copilot-agent';
 import { cleanWorkspace } from './clean';
 
-const RETRY_DELAY_MS = 10000;
+const ACTIVITY_TIMEOUT = 120_000; // 120 seconds
 const MAX_RETRIES = 3;
-const ACTIVITY_TIMEOUT_MS = 120000;
+const RETRY_DELAY = 10_000; // 10 seconds
 
-interface CLIArgs {
-  command: 'implement' | 'clean' | 'models' | 'help';
-  folder?: string;
-  model?: string;
-  noSandbox?: boolean;
-  dryRun?: boolean;
+function resolveGitHubToken(): string | null {
+  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
+  try {
+    const token = execFileSync('gh', ['auth', 'token'], { encoding: 'utf-8' }).trim();
+    if (token) return token;
+  } catch {
+    // gh CLI not available or not logged in
+  }
+  return null;
 }
 
-function parseArgs(): CLIArgs {
+async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
-  if (args.length === 0 || args[0] === 'help' || args[0] === '--help' || args[0] === '-h') {
-    return { command: 'help' };
-  }
-
-  const command = args[0] as CLIArgs['command'];
-
-  if (command === 'models') {
-    return { command: 'models' };
-  }
-
-  if (command === 'implement' || command === 'clean') {
-    const folder = args[1];
-    if (!folder) {
-      console.error(`Error: ${command} requires a folder argument`);
-      process.exit(1);
-    }
-
-    let model: string | undefined;
-    let noSandbox = false;
-    let dryRun = false;
-
-    for (let i = 2; i < args.length; i++) {
-      if (args[i] === '--model' && args[i + 1]) {
-        model = args[i + 1];
-        i++;
-      } else if (args[i] === '--no-sandbox') {
-        noSandbox = true;
-      } else if (args[i] === '--dry-run') {
-        dryRun = true;
-      }
-    }
-
-    return { command, folder, model, noSandbox, dryRun };
-  }
-
-  console.error(`Unknown command: ${command}`);
-  return { command: 'help' };
-}
-
-function printHelp(): void {
-  console.log(`
-Blueprint CLI
-
-Usage:
-  blueprint implement <folder>              Implement a blueprint into code
-  blueprint implement <folder> --model X    Use a specific model
-  blueprint implement <folder> --no-sandbox Run without safehouse sandbox
-  blueprint clean <folder>                  Remove generated files
-  blueprint clean <folder> --dry-run        Preview what would be deleted
-  blueprint models                          List available models
-  blueprint help                            Show this help
-
-Environment:
-  GITHUB_TOKEN    GitHub personal access token (required)
-
-Examples:
-  blueprint implement ./my-project
-  blueprint implement ./my-project --model claude-opus-4.6-1m
-  blueprint clean ./my-project --dry-run
-`);
-}
-
-async function getGitHubToken(): Promise<string> {
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) {
-    console.error('Error: GITHUB_TOKEN environment variable is required');
-    console.error('Set it with: export GITHUB_TOKEN=$(gh auth token)');
+  if (args.length === 0) {
+    printUsage();
     process.exit(1);
   }
-  return token;
+
+  const command = args[0];
+
+  switch (command) {
+    case 'implement':
+      await handleImplement(args.slice(1));
+      break;
+    case 'clean':
+      await handleClean(args.slice(1));
+      break;
+    case 'models':
+      await handleModels();
+      break;
+    default:
+      console.error(`Unknown command: ${command}`);
+      printUsage();
+      process.exit(1);
+  }
 }
 
-async function listModels(): Promise<void> {
-  const githubToken = await getGitHubToken();
-  let appRoot = path.dirname(fileURLToPath(import.meta.url));
-  while (appRoot !== '/' && !fs.existsSync(path.join(appRoot, 'node_modules'))) {
-    appRoot = path.dirname(appRoot);
-  }
-  const initResult = await initAgent({ githubToken, appRoot });
-  if (!initResult.ok) {
-    throw new Error(`Failed to initialize agent: ${initResult.error}`);
-  }
-  const models = await agentListModels();
-  console.log('Available models:\n');
-  for (const m of models) {
-    console.log(`  ${m.id}  ${m.name}`);
-  }
-  await stopAgent();
+function printUsage(): void {
+  console.log(`Usage:
+  blueprint implement <folder> [--model <model>] [--no-sandbox]
+  blueprint clean <folder> [--dry-run]
+  blueprint models`);
 }
 
-async function runImplementation(args: CLIArgs): Promise<void> {
-  const folder = path.resolve(args.folder!);
-  const blueprintPath = path.join(folder, 'blueprint.md');
+async function handleImplement(args: string[]): Promise<void> {
+  if (args.length === 0) {
+    console.error('Error: workspace folder required');
+    process.exit(1);
+  }
+
+  const folder = path.resolve(args[0]);
+  let model = 'claude-opus-4.5';
+  let noSandbox = false;
+
+  for (let i = 1; i < args.length; i++) {
+    if (args[i] === '--model' && args[i + 1]) {
+      model = args[++i];
+    } else if (args[i] === '--no-sandbox') {
+      noSandbox = true;
+    }
+  }
 
   if (!fs.existsSync(folder)) {
-    console.error(`Error: Folder not found: ${folder}`);
+    console.error(`Error: folder not found: ${folder}`);
     process.exit(1);
   }
 
+  const blueprintPath = path.join(folder, 'blueprint.md');
   if (!fs.existsSync(blueprintPath)) {
     console.error(`Error: blueprint.md not found in ${folder}`);
     process.exit(1);
   }
 
-  const githubToken = await getGitHubToken();
-  const blueprintContent = await fs.promises.readFile(blueprintPath, 'utf-8');
-  const model = args.model || 'claude-opus-4.6-1m';
-
-  console.log('[implement] Starting implementation');
-  console.log('[implement] Folder:', folder);
-  console.log('[implement] Model:', model);
-  console.log();
-
-  // Find app root (where node_modules is)
-  let appRoot = path.dirname(fileURLToPath(import.meta.url));
-  while (appRoot !== '/' && !fs.existsSync(path.join(appRoot, 'node_modules'))) {
-    appRoot = path.dirname(appRoot);
+  const githubToken = resolveGitHubToken();
+  if (!githubToken) {
+    console.error('Error: No GitHub token. Set GITHUB_TOKEN or run `gh auth login`.');
+    process.exit(1);
   }
 
-  let retries = 0;
-  let success = false;
+  const markdown = fs.readFileSync(blueprintPath, 'utf-8');
+  const appRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
-  while (retries <= MAX_RETRIES && !success) {
-    if (retries > 0) {
-      console.log(`\n[implement] Retry ${retries}/${MAX_RETRIES} after timeout...`);
-      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+  // Prefix user prompt with implementation directive
+  const userPrompt = `Implement the following blueprint now. Do not ask for confirmation — start immediately.\n\n${markdown}`;
+
+  let attempts = 0;
+  let lastError = '';
+
+  while (attempts < MAX_RETRIES) {
+    attempts++;
+    if (attempts > 1) {
+      console.log(`\n[implement] ♻️  Retry ${attempts}/${MAX_RETRIES} (waiting ${RETRY_DELAY / 1000}s)...`);
+      await sleep(RETRY_DELAY);
     }
 
-    await initAgent({
-      githubToken,
-      appRoot,
-      noSandbox: args.noSandbox,
-    });
+    try {
+      initAgent({ githubToken, appRoot, noSandbox });
 
-    let lastActivityTime = Date.now();
-    let activityCheckInterval: ReturnType<typeof setInterval> | null = null;
-
-    const result = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-      // Start activity check
-      activityCheckInterval = setInterval(() => {
-        const elapsed = Date.now() - lastActivityTime;
-        if (elapsed > ACTIVITY_TIMEOUT_MS) {
-          console.log(`\n[implement] ⚠️ No activity for ${Math.round(elapsed / 1000)}s`);
-          if (activityCheckInterval) clearInterval(activityCheckInterval);
-          resolve({ ok: false, error: 'Activity timeout' });
+      let lastActivity = Date.now();
+      let timedOut = false;
+      const activityCheck = setInterval(() => {
+        if (Date.now() - lastActivity > ACTIVITY_TIMEOUT) {
+          timedOut = true;
+          console.log('\n[implement] ⏱️  Activity timeout — no events for 120s');
+          clearInterval(activityCheck);
         }
-      }, 10000);
+      }, 5000);
 
-      implementWithAgent({
+      const result = await implementWithAgent({
         model,
-        markdown: blueprintContent,
+        markdown: userPrompt,
         workspaceFolder: folder,
         onEvent: (event) => {
-          lastActivityTime = Date.now();
+          lastActivity = Date.now();
 
           switch (event.type) {
-            case 'chunk': {
-              const content = event.data.content as string;
-              if (content) process.stdout.write(content);
+            case 'chunk':
+              process.stdout.write(String(event.data.content || ''));
               break;
-            }
-            case 'tool_start': {
-              const toolName = event.data.toolName as string;
-              const toolArgs = event.data.arguments as Record<string, unknown> | undefined;
-              const summary = getToolSummary(toolName, toolArgs);
-              console.log(`\n\x1b[33m🔧 ${toolName}\x1b[0m ${summary}`);
+            case 'tool_start':
+              console.log(`\n[implement] 🔧 ${event.data.toolName}`);
               break;
-            }
-            case 'tool_complete': {
-              const toolName = event.data.toolName as string;
-              console.log(`\x1b[32m✓ ${toolName} complete\x1b[0m`);
+            case 'tool_complete':
+              console.log(`[implement] ✓ ${event.data.toolName} complete`);
               break;
-            }
             case 'usage': {
-              const inputTokens = event.data.inputTokens as number;
-              const outputTokens = event.data.outputTokens as number;
-              const duration = event.data.duration as number;
-              const durationSec = (duration / 1000).toFixed(1);
-              console.log(`\x1b[90mtokens: ${inputTokens?.toLocaleString() || '?'} in / ${outputTokens?.toLocaleString() || '?'} out (${durationSec}s)\x1b[0m`);
+              const inT = event.data.inputTokens;
+              const outT = event.data.outputTokens;
+              const dur = ((event.data.duration as number) / 1000).toFixed(1);
+              console.log(`[implement] tokens: ${inT} in / ${outT} out (${dur}s)`);
               break;
             }
-            case 'error': {
-              const message = event.data.message as string;
-              console.log(`\n\x1b[31m✗ ${message}\x1b[0m`);
+            case 'error':
+              console.error(`\n[implement] ✗ ${event.data.message}`);
               break;
-            }
-            case 'done': {
-              if (activityCheckInterval) clearInterval(activityCheckInterval);
-              resolve({ ok: true });
+            case 'done':
+              console.log('\n[implement] ✅ Implementation complete');
               break;
-            }
+            case 'log':
+              console.log(`[implement] ${event.data.message}`);
+              break;
           }
         },
-      }).then((r) => {
-        if (activityCheckInterval) clearInterval(activityCheckInterval);
-        resolve(r);
       });
-    });
 
-    if (result.ok) {
-      success = true;
-      console.log('\n[implement] ✅ Implementation complete');
-    } else if (result.error === 'Activity timeout') {
-      retries++;
-      await stopAgent();
-    } else {
-      console.error('\n[implement] ❌ Implementation failed:', result.error);
-      await stopAgent();
+      clearInterval(activityCheck);
+
+      if (timedOut) {
+        lastError = 'Activity timeout';
+        stopAgent();
+        continue; // retry
+      }
+
+      stopAgent();
+
+      if (result.ok) {
+        process.exit(0);
+      } else {
+        // Non-timeout errors fail immediately
+        console.error(`\n[implement] Failed: ${result.error}`);
+        process.exit(1);
+      }
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+      console.error(`\n[implement] Error: ${lastError}`);
+      stopAgent();
+      // Non-timeout errors fail immediately
       process.exit(1);
     }
   }
 
-  if (!success) {
-    console.error('\n[implement] ❌ Implementation failed after', MAX_RETRIES, 'retries');
+  console.error(`\n[implement] Failed after ${MAX_RETRIES} retries. Last error: ${lastError}`);
+  process.exit(1);
+}
+
+async function handleClean(args: string[]): Promise<void> {
+  if (args.length === 0) {
+    console.error('Error: workspace folder required');
     process.exit(1);
   }
 
-  await stopAgent();
-}
+  const folder = path.resolve(args[0]);
+  const dryRun = args.includes('--dry-run');
 
-function getToolSummary(toolName: string, args?: Record<string, unknown>): string {
-  if (!args) return '';
-
-  if (toolName.includes('file') || toolName.includes('create') || toolName.includes('edit') || toolName.includes('view')) {
-    const p = args.path || args.file_path || args.filepath || args.file;
-    if (p) return String(p);
-  }
-
-  if (toolName.includes('bash') || toolName.includes('shell') || toolName.includes('command')) {
-    const cmd = args.command || args.cmd;
-    if (cmd) {
-      const cmdStr = String(cmd);
-      return cmdStr.length > 60 ? cmdStr.substring(0, 57) + '...' : cmdStr;
-    }
-  }
-
-  if (toolName.includes('grep') || toolName.includes('search')) {
-    const pattern = args.pattern || args.query;
-    if (pattern) return `"${pattern}"`;
-  }
-
-  return '';
-}
-
-async function runClean(args: CLIArgs): Promise<void> {
-  const folder = path.resolve(args.folder!);
-
-  if (!fs.existsSync(folder)) {
-    console.error(`Error: Folder not found: ${folder}`);
-    process.exit(1);
-  }
-
-  const result = await cleanWorkspace(folder, { dryRun: args.dryRun });
+  const result = await cleanWorkspace(folder, { dryRun });
 
   if (!result.ok) {
-    console.error('Error:', result.error);
+    console.error(`Error: ${result.error}`);
     process.exit(1);
   }
 
-  if (result.deleted && result.deleted.length > 0) {
-    if (args.dryRun) {
-      console.log('Would delete:');
-    } else {
-      console.log('Deleted:');
-    }
+  if (result.deleted.length === 0) {
+    console.log('Nothing to clean.');
+  } else if (dryRun) {
+    console.log('Would delete:');
     for (const entry of result.deleted) {
       console.log(`  ${entry}`);
     }
   } else {
-    console.log('Nothing to clean.');
+    console.log('Deleted:');
+    for (const entry of result.deleted) {
+      console.log(`  ${entry}`);
+    }
   }
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs();
-
-  switch (args.command) {
-    case 'help':
-      printHelp();
-      break;
-    case 'models':
-      await listModels();
-      break;
-    case 'implement':
-      await runImplementation(args);
-      break;
-    case 'clean':
-      await runClean(args);
-      break;
+async function handleModels(): Promise<void> {
+  const githubToken = resolveGitHubToken();
+  if (!githubToken) {
+    console.error('Error: No GitHub token. Set GITHUB_TOKEN or run `gh auth login`.');
+    process.exit(1);
   }
+
+  const appRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+
+  const result = await listModels(githubToken, appRoot);
+  if (!result.ok) {
+    console.error(`Error: ${result.error}`);
+    process.exit(1);
+  }
+
+  console.log('Available models:');
+  for (const model of result.models) {
+    console.log(`  ${model.id} — ${model.name}`);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 main().catch((err) => {
-  console.error('Fatal error:', err);
+  console.error(err);
   process.exit(1);
 });

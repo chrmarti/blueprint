@@ -1,45 +1,61 @@
-// auth.ts - GitHub token management for Blueprint Implementer
+// auth.ts — GitHub token resolution and user info
 
-let cachedGitHubUser: GitHubUser | null = null;
+import { execFile } from 'child_process';
 
-interface GitHubUser {
+export function resolveGitHubToken(): Promise<string | null> {
+  if (process.env.GITHUB_TOKEN) {
+    return Promise.resolve(process.env.GITHUB_TOKEN);
+  }
+
+  return new Promise((resolve) => {
+    execFile('gh', ['auth', 'token'], (err, stdout) => {
+      if (err || !stdout.trim()) {
+        resolve(null);
+      } else {
+        resolve(stdout.trim());
+      }
+    });
+  });
+}
+
+export interface GitHubUser {
   login: string;
   avatar_url: string;
-  name?: string;
 }
 
-export async function getGitHubUser(): Promise<GitHubUser | null> {
-  if (cachedGitHubUser) {
-    return cachedGitHubUser;
-  }
+export async function fetchGitHubUser(token: string): Promise<GitHubUser | null> {
+  const { default: https } = await import('https');
 
-  const user = await window.electronAPI.getUser();
-  if (user) {
-    cachedGitHubUser = user;
-  }
-  return user;
-}
-
-export function getCachedUser(): GitHubUser | null {
-  return cachedGitHubUser;
-}
-
-export function updateUserDisplay(): void {
-  const userInfo = document.getElementById('user-info');
-  if (!userInfo) return;
-
-  const user = getCachedUser();
-  if (user) {
-    userInfo.innerHTML = `
-      <img class="user-avatar" src="${user.avatar_url}" alt="${user.login}">
-      <span class="user-login">${user.login}</span>
-    `;
-  } else {
-    userInfo.innerHTML = '<span class="user-login">Not signed in</span>';
-  }
-}
-
-export async function initAuth(): Promise<void> {
-  await getGitHubUser();
-  updateUserDisplay();
+  return new Promise((resolve) => {
+    const req = https.request(
+      'https://api.github.com/user',
+      {
+        headers: {
+          Authorization: `token ${token}`,
+          'User-Agent': 'blueprint-implementer',
+          Accept: 'application/json',
+        },
+      },
+      (res) => {
+        let body = '';
+        res.on('data', (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        res.on('end', () => {
+          try {
+            const user = JSON.parse(body);
+            if (user.login) {
+              resolve({ login: user.login, avatar_url: user.avatar_url });
+            } else {
+              resolve(null);
+            }
+          } catch {
+            resolve(null);
+          }
+        });
+      }
+    );
+    req.on('error', () => resolve(null));
+    req.end();
+  });
 }

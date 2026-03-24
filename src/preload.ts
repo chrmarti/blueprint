@@ -1,37 +1,35 @@
-// preload.ts - Electron preload script for Blueprint Implementer
+// preload.ts — Preload script for Electron contextBridge
+
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  // Dialog
-  openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
-  saveFile: (defaultName: string) => ipcRenderer.invoke('dialog:saveFile', defaultName),
-
-  // Workspace
-  getWorkspaceFolder: () => ipcRenderer.invoke('workspace:getFolder'),
-
   // File system
+  openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
+  getWorkspaceFolder: () => ipcRenderer.invoke('workspace:getFolder'),
   readDir: (dirPath: string) => ipcRenderer.invoke('fs:readDir', dirPath),
   readFile: (filePath: string) => ipcRenderer.invoke('fs:readFile', filePath),
-  writeFile: (filePath: string, content: string) => ipcRenderer.invoke('fs:writeFile', filePath, content),
+  writeFile: (filePath: string, content: string) =>
+    ipcRenderer.invoke('fs:writeFile', filePath, content),
   deleteEntry: (entryPath: string) => ipcRenderer.invoke('fs:delete', entryPath),
-  cleanWorkspace: (options?: { dryRun?: boolean }) => ipcRenderer.invoke('fs:cleanWorkspace', options),
+  cleanWorkspace: (options?: { dryRun?: boolean }) =>
+    ipcRenderer.invoke('fs:cleanWorkspace', options),
+  saveFileDialog: (defaultName: string, content: string) =>
+    ipcRenderer.invoke('dialog:saveFile', defaultName, content),
 
   // Auth
   getUser: () => ipcRenderer.invoke('auth:getUser'),
 
-  // API
-  copilotListModels: () => ipcRenderer.invoke('copilot:listModels'),
-
-  // Copilot Agent
-  copilotInit: (githubToken: string) => ipcRenderer.invoke('copilot:init', githubToken),
-  copilotImplement: (options: { model: string; systemPrompt?: string; userPrompt: string }) =>
+  // Copilot
+  listModels: () => ipcRenderer.invoke('copilot:listModels'),
+  initCopilot: (githubToken: string) => ipcRenderer.invoke('copilot:init', githubToken),
+  implement: (options: { model: string; systemPrompt?: string; userPrompt: string }) =>
     ipcRenderer.invoke('copilot:implement', options),
-  copilotStop: () => ipcRenderer.invoke('copilot:stop'),
+  stopCopilot: () => ipcRenderer.invoke('copilot:stop'),
   onCopilotChunk: (callback: (chunk: string) => void) => {
-    ipcRenderer.on('copilot:chunk', (_event, chunk) => callback(chunk));
+    ipcRenderer.on('copilot:chunk', (_event, chunk: string) => callback(chunk));
   },
   onCopilotEvent: (callback: (event: ImplementEvent) => void) => {
-    ipcRenderer.on('copilot:event', (_event, event) => callback(event));
+    ipcRenderer.on('copilot:event', (_event, data: ImplementEvent) => callback(data));
   },
   removeCopilotListeners: () => {
     ipcRenderer.removeAllListeners('copilot:chunk');
@@ -44,13 +42,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Terminal
   terminalSpawn: () => ipcRenderer.invoke('terminal:spawn'),
   terminalWrite: (data: string) => ipcRenderer.send('terminal:write', data),
-  terminalResize: (cols: number, rows: number) => ipcRenderer.send('terminal:resize', cols, rows),
-  terminalKill: () => ipcRenderer.invoke('terminal:kill'),
+  terminalResize: (cols: number, rows: number) =>
+    ipcRenderer.send('terminal:resize', cols, rows),
+  terminalKill: () => ipcRenderer.send('terminal:kill'),
   onTerminalData: (callback: (data: string) => void) => {
-    ipcRenderer.on('terminal:data', (_event, data) => callback(data));
+    ipcRenderer.on('terminal:data', (_event, data: string) => callback(data));
   },
-  onTerminalExit: (callback: (code: number) => void) => {
-    ipcRenderer.on('terminal:exit', (_event, code) => callback(code));
+  onTerminalExit: (callback: () => void) => {
+    ipcRenderer.on('terminal:exit', () => callback());
   },
   removeTerminalDataListeners: () => {
     ipcRenderer.removeAllListeners('terminal:data');
@@ -60,12 +59,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 });
 
-// Listen for workspace changes from main process
-ipcRenderer.on('workspace:changed', (_event, folder) => {
-  window.dispatchEvent(new CustomEvent('workspace-changed', { detail: folder }));
+// Listen for folder changes from the main process
+ipcRenderer.on('folder:changed', (_event, folder: string) => {
+  window.dispatchEvent(new CustomEvent('folder-changed', { detail: folder }));
 });
-
-interface ImplementEvent {
-  type: string;
-  data: Record<string, unknown>;
-}

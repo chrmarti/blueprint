@@ -1,14 +1,15 @@
-// copilot-agent.ts - Shared Copilot SDK module for Blueprint Implementer
-// Used by both Electron main process and CLI
+// copilot-agent.ts — Shared Copilot agent module (Electron & CLI)
 
-import * as fs from 'fs';
+import type {
+  CopilotClient as CopilotClientType,
+  CopilotSession as CopilotSessionType,
+  SessionEvent,
+} from '@github/copilot-sdk';
 import * as path from 'path';
+import * as fs from 'fs';
 import * as os from 'os';
 
-// Import types only at compile time (SDK is ESM-only)
-import type { CopilotClient, CopilotSession, SessionEvent, SessionConfig } from '@github/copilot-sdk';
-
-export interface AgentInitOptions {
+export interface InitOptions {
   githubToken: string;
   appRoot: string;
   noSandbox?: boolean;
@@ -22,279 +23,272 @@ export interface ImplementOptions {
   onEvent: (event: ImplementEvent) => void;
 }
 
-export interface ImplementEvent {
-  type: 'log' | 'chunk' | 'tool_start' | 'tool_complete' | 'usage' | 'error' | 'done' | 'files_changed' | 'preview_url';
-  data: Record<string, unknown>;
-}
+let initOpts: InitOptions | null = null;
+let client: CopilotClientType | null = null;
+let session: CopilotSessionType | null = null;
+let currentWorkspaceFolder: string | null = null;
 
-export interface ImplementResult {
-  ok: boolean;
-  error?: string;
-}
-
-let client: CopilotClient | null = null;
-let session: CopilotSession | null = null;
-let initOptions: AgentInitOptions | null = null;
-let lastWorkspaceFolder: string | null = null;
-
-/**
- * Resolves the path to the Copilot CLI native binary.
- */
-export function resolveCLIPath(appRoot: string): string {
-  const platform = process.platform;
-  const arch = process.arch;
-
-  const platformMap: Record<string, string> = {
-    darwin: 'darwin',
-    linux: 'linux',
-    win32: 'win32',
-  };
-  const archMap: Record<string, string> = {
-    arm64: 'arm64',
-    x64: 'x64',
-  };
-
-  const platformName = platformMap[platform];
-  const archName = archMap[arch];
-
-  if (platformName && archName) {
-    const nativePath = path.join(appRoot, 'node_modules', '@github', `copilot-${platformName}-${archName}`, 'copilot');
-    if (fs.existsSync(nativePath)) {
-      return nativePath;
-    }
+function resolveCLIPath(appRoot: string): string {
+  const platform = process.platform === 'darwin' ? 'darwin' : 'linux';
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const nativePath = path.join(
+    appRoot,
+    'node_modules',
+    '@github',
+    `copilot-${platform}-${arch}`,
+    'copilot'
+  );
+  if (fs.existsSync(nativePath)) {
+    return nativePath;
   }
-
-  // Fallback to JS entry point
-  const jsPath = path.join(appRoot, 'node_modules', '@github', 'copilot', 'npm-loader.js');
-  if (fs.existsSync(jsPath)) {
-    return jsPath;
-  }
-
-  throw new Error('Could not find Copilot CLI binary');
+  return path.join(appRoot, 'node_modules', '@github', 'copilot', 'npm-loader.js');
 }
 
-/**
- * Initializes the agent with credentials and configuration.
- * Does not create the client yet — that happens in implementWithAgent().
- */
-export async function initAgent(options: AgentInitOptions): Promise<{ ok: boolean; error?: string }> {
-  try {
-    // Stop existing client
-    if (client) {
-      await client.stop();
-      client = null;
-    }
+function resolveSafehousePath(appRoot: string): string | null {
+  const paths = [
+    path.join(appRoot, 'scripts', 'safehouse'),
+    path.join(appRoot, 'cli', 'scripts', 'safehouse'),
+  ];
+  for (const p of paths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+export function initAgent(opts: InitOptions): void {
+  if (client) {
+    client.stop();
+    client = null;
     session = null;
-    lastWorkspaceFolder = null;
-
-    initOptions = options;
-    console.log('[copilot] Agent initialized');
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: (err as Error).message };
+    currentWorkspaceFolder = null;
   }
+  initOpts = opts;
+  console.log('[copilot] Agent initialized');
 }
 
-/**
- * List available models from the Copilot API.
- * Creates a temporary client, queries models, and stops it.
- */
-export async function listModels(): Promise<{ id: string; name: string }[]> {
-  if (!initOptions) throw new Error('Agent not initialized');
-
-  const sdk = await import('@github/copilot-sdk');
-  const { CopilotClient: CopilotClientCtor } = sdk;
-  const cliPath = resolveCLIPath(initOptions.appRoot);
-
-  const tempClient = new CopilotClientCtor({
-    cliPath,
-    cwd: process.cwd(),
-    githubToken: initOptions.githubToken,
-    logLevel: 'info',
-  });
-  try {
-    await tempClient.start();
-    const models = await tempClient.listModels();
-    await tempClient.stop();
-    return models.map((m: { id: string; name: string }) => ({ id: m.id, name: m.name }));
-  } catch (err) {
-    await tempClient.stop().catch(() => {});
-    throw err;
-  }
-}
-
-/**
- * Runs implementation using the Copilot SDK agent.
- */
-export async function implementWithAgent(options: ImplementOptions): Promise<ImplementResult> {
-  if (!initOptions) {
-    return { ok: false, error: 'Agent not initialized' };
+export async function implementWithAgent(opts: ImplementOptions): Promise<{ ok: boolean; error?: string }> {
+  if (!initOpts) {
+    return { ok: false, error: 'Agent not initialized. Call initAgent() first.' };
   }
 
-  const { model, markdown, workspaceFolder, systemPrompt, onEvent } = options;
+  const { CopilotClient, defineTool } = await import('@github/copilot-sdk');
+  const { z } = await import('zod');
 
-  try {
-    // Dynamic import of ESM-only SDK
-    const { CopilotClient: CC, defineTool } = await import('@github/copilot-sdk');
-    const { z } = await import('zod');
+  const cliPath = resolveCLIPath(initOpts.appRoot);
+  const safehousePath = initOpts.noSandbox ? null : resolveSafehousePath(initOpts.appRoot);
+  const electronExtraProfilePath = path.join(initOpts.appRoot, 'scripts', 'electron-safehouse-extra.sb');
 
-    // Recreate client if workspace changed
-    if (!client || lastWorkspaceFolder !== workspaceFolder) {
-      if (client) {
-        await client.stop();
-      }
+  // Recreate client if workspace changed
+  if (client && currentWorkspaceFolder !== opts.workspaceFolder) {
+    console.log('[copilot] Workspace changed, recreating client');
+    client.stop();
+    client = null;
+    session = null;
+  }
 
-      const appRoot = initOptions.appRoot;
-      const cliPath = resolveCLIPath(appRoot);
+  if (!client) {
+    const electronCachePath = path.join(os.homedir(), 'Library', 'Caches', 'electron');
+    const appSupportPath = path.join(os.homedir(), 'Library', 'Application Support', 'blueprint-implementer');
 
-      if (initOptions.noSandbox) {
-        // No sandbox - run CLI directly
-        console.log('[copilot] Creating client without sandbox');
-        client = new CC({
-          cwd: workspaceFolder,
-          cliPath,
-          githubToken: initOptions.githubToken,
-          autoRestart: true,
-          logLevel: 'info',
-        });
-      } else {
-        // Use safehouse sandbox
-        const safehousePath = path.join(appRoot, 'scripts', 'safehouse');
-        if (!fs.existsSync(safehousePath)) {
-          throw new Error(`Safehouse not found at ${safehousePath}. Run: npm install`);
-        }
-
-        const electronCachePath = path.join(os.homedir(), 'Library', 'Caches', 'electron');
-        const appSupportPath = path.join(os.homedir(), 'Library', 'Application Support', 'blueprint-implementer');
-        const electronExtraProfilePath = path.join(appRoot, 'scripts', 'electron-safehouse-extra.sb');
-
-        console.log('[copilot] Creating client with safehouse sandbox');
-        console.log('[copilot] CLI path:', cliPath);
-        console.log('[copilot] Workspace:', workspaceFolder);
-
-        client = new CC({
-          cwd: workspaceFolder,
-          cliPath: safehousePath,
-          cliArgs: [
-            '--workdir', workspaceFolder,
-            '--add-dirs-ro', appRoot,
-            '--enable=electron',
-            '--add-dirs', `${electronCachePath}:${appSupportPath}`,
-            '--append-profile', electronExtraProfilePath,
-            '--env-pass=COPILOT_SDK_AUTH_TOKEN',
-            cliPath,
-          ],
-          githubToken: initOptions.githubToken,
-          autoRestart: true,
-          logLevel: 'info',
-        });
-      }
-
-      lastWorkspaceFolder = workspaceFolder;
+    interface ClientOpts {
+      cwd: string;
+      cliPath: string;
+      cliArgs?: string[];
+      githubToken: string;
+      autoRestart: boolean;
+      logLevel: 'debug' | 'info' | 'warn' | 'error';
     }
 
-    // Build full system prompt
-    let fullSystemPrompt = systemPrompt || getDefaultSystemPrompt();
-    fullSystemPrompt += '\n\n' + markdown;
-
-    // Define custom tools
-    const openPreviewTool = defineTool('open_in_preview_browser', {
-      description: "Opens a URL in the application's Preview panel (the embedded browser on the right side of the UI). Use this after starting a dev server to show the running application to the user.",
-      parameters: z.object({
-        url: z.string().describe('The URL to open (e.g., http://localhost:3000)'),
-      }),
-      handler: async ({ url }: { url: string }) => {
-        onEvent({ type: 'preview_url', data: { url } });
-        return `Opened ${url} in the Preview panel.`;
-      },
-    });
-
-    // Create session
-    console.log('[copilot] Creating session with model:', model);
-    const sessionConfig: SessionConfig = {
-      model,
-      streaming: true,
-      workingDirectory: workspaceFolder,
-      systemMessage: { mode: 'append', content: fullSystemPrompt },
-      tools: [openPreviewTool],
-      onPermissionRequest: async () => ({ kind: 'approved' as const }),
+    const clientOpts: ClientOpts = {
+      cwd: opts.workspaceFolder,
+      cliPath: safehousePath || cliPath,
+      githubToken: initOpts.githubToken,
+      autoRestart: true,
+      logLevel: 'debug',
     };
 
-    session = await client.createSession(sessionConfig);
+    if (safehousePath) {
+      clientOpts.cliArgs = [
+        '--workdir', opts.workspaceFolder,
+        '--add-dirs-ro', initOpts.appRoot,
+        '--enable=electron',
+        '--add-dirs', electronCachePath + ':' + appSupportPath,
+        '--append-profile', electronExtraProfilePath,
+        '--env-pass=COPILOT_SDK_AUTH_TOKEN',
+        cliPath,
+      ];
+    }
+
+    client = new CopilotClient(clientOpts as ConstructorParameters<typeof CopilotClient>[0]);
+    currentWorkspaceFolder = opts.workspaceFolder;
+    console.log('[copilot] Client created for workspace:', opts.workspaceFolder);
+  }
+
+  const systemPrompt = opts.systemPrompt || buildSystemPrompt(opts.markdown);
+
+  // Define the open_in_preview_browser tool
+  const previewTool = defineTool('open_in_preview_browser', {
+    description: 'Opens a URL in the application\'s Preview panel (the embedded browser on the right side of the UI). Use this after starting a dev server to show the running application to the user.',
+    parameters: z.object({
+      url: z.string().describe('The URL to open (e.g., http://localhost:3000)'),
+    }),
+    handler: async ({ url }: { url: string }) => {
+      opts.onEvent({ type: 'preview_url', data: { url } });
+      return `Opened ${url} in the Preview panel.`;
+    },
+  });
+
+  try {
+    session = await client.createSession({
+      model: opts.model,
+      streaming: true,
+      workingDirectory: opts.workspaceFolder,
+      systemMessage: {
+        mode: 'append' as const,
+        content: systemPrompt,
+      },
+      onPermissionRequest: async () => ({ kind: 'approved' as const }),
+      tools: [previewTool],
+    });
+
+    console.log('[copilot] Session created');
 
     // Subscribe to events
     const unsubscribe = session.on((event: SessionEvent) => {
-      const eventType = event.type;
-      const eventData = (event as { data?: Record<string, unknown> }).data || {};
-
-      // Log non-delta events
-      if (eventType !== 'assistant.message_delta') {
-        console.log(`[copilot] ${eventType}`, eventType.includes('usage') ? eventData : '');
-      }
-
-      // Emit typed events
-      switch (eventType) {
-        case 'assistant.message_delta':
-          onEvent({ type: 'chunk', data: { content: eventData.deltaContent || '' } });
-          break;
-        case 'tool.execution_start':
-          onEvent({ type: 'tool_start', data: eventData });
-          break;
-        case 'tool.execution_complete':
-          onEvent({ type: 'tool_complete', data: eventData });
-          // Check for file changes
-          const toolName = eventData.toolName as string;
-          if (['create', 'edit', 'bash', 'write_file', 'create_file'].some((t) => toolName?.includes(t))) {
-            onEvent({ type: 'files_changed', data: {} });
-          }
-          break;
-        case 'assistant.usage':
-          onEvent({ type: 'usage', data: eventData });
-          break;
-        case 'session.error':
-          onEvent({ type: 'error', data: eventData });
-          break;
-        case 'session.idle':
-          onEvent({ type: 'done', data: {} });
-          break;
-        default:
-          onEvent({ type: 'log', data: { message: eventType } });
-      }
+      handleEvent(event, opts.onEvent);
     });
 
-    // Send the user prompt with implementation directive
-    const userPrompt = `Implement the following blueprint now. Do not ask for confirmation — start immediately.\n\n${markdown}`;
-
-    console.log('[copilot] Sending prompt...');
     try {
-      await session.sendAndWait({ prompt: userPrompt }, 600000);
-      console.log('[copilot] Implementation complete');
-      unsubscribe();
+      await session.sendAndWait({ prompt: opts.markdown }, 600000);
+      opts.onEvent({ type: 'done', data: {} });
       return { ok: true };
     } catch (err) {
-      console.error('[copilot] Implementation error:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      opts.onEvent({ type: 'error', data: { message } });
+      return { ok: false, error: message };
+    } finally {
       unsubscribe();
-      return { ok: false, error: String(err) };
     }
   } catch (err) {
-    console.error('[copilot] Implementation error:', err);
-    return { ok: false, error: String(err) };
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[copilot] Session error:', message);
+    return { ok: false, error: message };
   }
 }
 
-/**
- * Stops the active session and client.
- */
-export async function stopAgent(): Promise<void> {
-  session = null;
+function handleEvent(event: SessionEvent, onEvent: (e: ImplementEvent) => void): void {
+  const type = event.type;
+  const data = 'data' in event ? (event as { data: Record<string, unknown> }).data : {};
+
+  switch (type) {
+    case 'session.start':
+      console.log('[copilot] Session started');
+      onEvent({ type: 'log', data: { message: 'session started' } });
+      break;
+    case 'assistant.turn_start':
+      console.log('[copilot] Turn started:', data.turnId);
+      onEvent({ type: 'log', data: { message: 'turn started' } });
+      break;
+    case 'assistant.message_delta':
+      // Stream text to output
+      onEvent({ type: 'chunk', data: { content: data.deltaContent || '' } });
+      break;
+    case 'assistant.usage':
+      console.log(
+        `[copilot] Usage: ${data.model} — ${data.inputTokens} in / ${data.outputTokens} out (${data.duration}ms)`
+      );
+      onEvent({
+        type: 'usage',
+        data: {
+          inputTokens: data.inputTokens,
+          outputTokens: data.outputTokens,
+          duration: data.duration,
+          model: data.model,
+        },
+      });
+      break;
+    case 'tool.execution_start':
+      console.log(`[copilot] Tool: ${data.toolName} — ${JSON.stringify(data.arguments).slice(0, 120)}`);
+      onEvent({
+        type: 'tool_start',
+        data: {
+          toolName: data.toolName,
+          arguments: data.arguments,
+        },
+      });
+      break;
+    case 'tool.execution_complete':
+      console.log(`[copilot] Tool complete: ${data.success ? 'ok' : 'failed'}`);
+      onEvent({
+        type: 'tool_complete',
+        data: {
+          success: data.success,
+          toolName: data.toolName || '',
+        },
+      });
+      // Signal files changed after file-writing tools
+      onEvent({ type: 'files_changed', data: {} });
+      break;
+    case 'assistant.turn_end':
+      console.log('[copilot] Turn ended:', data.turnId);
+      onEvent({ type: 'log', data: { message: 'turn ended' } });
+      break;
+    case 'session.idle':
+      console.log('[copilot] Session idle');
+      break;
+    case 'session.error': {
+      const errMsg = data.message || 'Unknown error';
+      console.error('[copilot] Session error:', errMsg);
+      onEvent({ type: 'error', data: { message: errMsg } });
+      break;
+    }
+    default:
+      // Other events logged but not forwarded
+      console.log(`[copilot] Event: ${type}`);
+      break;
+  }
+}
+
+export async function listModels(githubToken: string, appRoot: string): Promise<{ ok: boolean; models: { id: string; name: string }[]; error?: string }> {
+  const { CopilotClient } = await import('@github/copilot-sdk');
+
+  const cliPath = resolveCLIPath(appRoot);
+  const tmpClient = new CopilotClient({
+    cliPath,
+    githubToken,
+    autoRestart: false,
+    logLevel: 'warning',
+  } as ConstructorParameters<typeof CopilotClient>[0]);
+
+  try {
+    await tmpClient.start();
+    const models = await tmpClient.listModels();
+    const result = models.map((m: { id: string; name?: string }) => ({
+      id: m.id,
+      name: m.name || m.id,
+    }));
+    return { ok: true, models: result };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, models: [], error: message };
+  } finally {
+    tmpClient.stop();
+  }
+}
+
+export function stopAgent(): void {
+  if (session) {
+    session = null;
+  }
   if (client) {
-    await client.stop();
+    client.stop();
     client = null;
+    currentWorkspaceFolder = null;
   }
   console.log('[copilot] Agent stopped');
 }
 
-function getDefaultSystemPrompt(): string {
+function buildSystemPrompt(blueprintContent: string): string {
   return `You are a code generator working in a project workspace. The workspace root contains a blueprint.md file that describes the application to build — its architecture, components, file structure, and behavior. The blueprint may be self-contained or it may reference other markdown documents in the workspace that together make up the full specification. Your job is to read the blueprint and turn it into working code.
 
 Follow this workflow:
@@ -320,5 +314,7 @@ Follow this workflow:
 ## Delivery
 13. If the project has a dev server, start it and use the open_in_preview_browser tool to show it in the Preview panel.
 
-You have a custom tool available: open_in_preview_browser. Call it with a URL (e.g., http://localhost:3000) to open that URL in the application's embedded browser. Use this after starting a dev server so the user can see the running application.`;
+You have a custom tool available: open_in_preview_browser. Call it with a URL (e.g., http://localhost:3000) to open that URL in the application's embedded browser. Use this after starting a dev server so the user can see the running application.
+
+${blueprintContent}`;
 }

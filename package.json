@@ -1,40 +1,29 @@
 {
   "name": "blueprint-implementer",
   "version": "1.0.0",
-  "description": "Desktop authoring environment for writing structured markdown blueprints and implementing them into executable applications using the Copilot SDK",
+  "description": "A desktop authoring environment for writing structured markdown blueprints and implementing them into executable applications using the Copilot SDK.",
   "main": "dist/electron.cjs",
   "scripts": {
     "build": "node build.mjs",
     "start": "electron .",
-    "dev": "npm run build && npm start",
+    "dev": "node build.mjs && electron .",
     "test": "node test/interact.mjs",
-    "package": "npm run build && node build.package.mjs",
-    "install-cli": "npm run build && cd cli && npm pack && npm install -g blueprint-1.0.0.tgz && rm blueprint-1.0.0.tgz",
+    "package": "node build.mjs && node build.package.mjs",
+    "install-cli": "node build.mjs && cd cli && npm pack && npm install -g blueprint-1.0.0.tgz && rm blueprint-1.0.0.tgz",
     "postinstall": "mkdir -p scripts && curl -fsSL https://raw.githubusercontent.com/eugene1g/agent-safehouse/main/dist/safehouse.sh -o scripts/safehouse && chmod +x scripts/safehouse && chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true"
   },
-  "keywords": [
-    "electron",
-    "blueprint",
-    "copilot",
-    "markdown",
-    "code-generation"
-  ],
-  "author": "",
-  "license": "MIT",
   "dependencies": {
-    "@github/copilot": "latest",
     "@github/copilot-sdk": "latest",
+    "@github/copilot": "latest",
     "@xterm/xterm": "latest",
     "marked": "latest",
     "node-pty": "latest"
   },
   "devDependencies": {
-    "@electron/packager": "latest",
-    "@types/node": "latest",
     "electron": "latest",
     "esbuild": "latest",
-    "playwright": "latest",
     "typescript": "latest",
-    "zod": "latest"
+    "@electron/packager": "latest",
+    "playwright": "latest"
   }
 }

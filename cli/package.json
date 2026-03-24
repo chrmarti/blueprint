@@ -1,28 +1,17 @@
 {
   "name": "blueprint",
   "version": "1.0.0",
-  "description": "CLI for implementing markdown blueprints into code using the Copilot SDK",
+  "description": "CLI tool for implementing blueprints into code using the Copilot SDK",
   "type": "module",
   "bin": {
-    "blueprint": "./blueprint.mjs"
-  },
-  "files": [
-    "blueprint.mjs",
-    "blueprint.mjs.map",
-    "scripts/"
-  ],
-  "keywords": [
-    "blueprint",
-    "copilot",
-    "code-generation",
-    "cli"
-  ],
-  "author": "",
-  "license": "MIT",
-  "engines": {
-    "node": ">=18"
+    "blueprint": "index.mjs"
   },
   "dependencies": {
     "@github/copilot": "latest"
-  }
+  },
+  "files": [
+    "index.mjs",
+    "index.mjs.map",
+    "scripts/"
+  ]
 }

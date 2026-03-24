@@ -1,83 +1,56 @@
-// clean.ts - Workspace cleanup logic for Blueprint Implementer
+// clean.ts — Workspace cleanup driven by .blueprintfiles
 
 import * as fs from 'fs';
 import * as path from 'path';
 
 export interface CleanResult {
   ok: boolean;
-  deleted?: string[];
+  deleted: string[];
   error?: string;
 }
 
-export interface CleanOptions {
-  dryRun?: boolean;
-}
-
-/**
- * Reads .blueprintfiles and returns the set of paths to preserve.
- * Always includes .blueprintfiles and .git.
- */
-export async function getKeepSet(workspaceFolder: string): Promise<Set<string>> {
-  const keepSet = new Set<string>();
-  keepSet.add('.blueprintfiles');
-  keepSet.add('.git');
-
-  const blueprintFilesPath = path.join(workspaceFolder, '.blueprintfiles');
-  if (!fs.existsSync(blueprintFilesPath)) {
-    return keepSet;
-  }
-
-  const content = await fs.promises.readFile(blueprintFilesPath, 'utf-8');
+function parseBlueprintFiles(content: string): Set<string> {
+  const keep = new Set<string>();
   for (const line of content.split('\n')) {
     const trimmed = line.trim();
-    if (trimmed && !trimmed.startsWith('#')) {
-      // Remove trailing slash
-      keepSet.add(trimmed.replace(/\/$/, ''));
-    }
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    // Strip trailing slash
+    keep.add(trimmed.replace(/\/+$/, ''));
   }
-
-  return keepSet;
+  return keep;
 }
 
-/**
- * Cleans the workspace by removing all root-level entries not in .blueprintfiles.
- */
 export async function cleanWorkspace(
   workspaceFolder: string,
-  options?: CleanOptions
+  options: { dryRun?: boolean } = {}
 ): Promise<CleanResult> {
-  const blueprintFilesPath = path.join(workspaceFolder, '.blueprintfiles');
-  if (!fs.existsSync(blueprintFilesPath)) {
-    return { ok: false, error: 'No .blueprintfiles found' };
+  const bpFilePath = path.join(workspaceFolder, '.blueprintfiles');
+
+  if (!fs.existsSync(bpFilePath)) {
+    return { ok: false, deleted: [], error: 'No .blueprintfiles found in workspace root.' };
   }
 
-  try {
-    const keepSet = await getKeepSet(workspaceFolder);
-    const entries = await fs.promises.readdir(workspaceFolder);
-    const toDelete: string[] = [];
+  const content = fs.readFileSync(bpFilePath, 'utf-8');
+  const keep = parseBlueprintFiles(content);
 
-    for (const entry of entries) {
-      if (!keepSet.has(entry)) {
-        toDelete.push(entry);
-      }
-    }
+  // Always preserve these
+  keep.add('.blueprintfiles');
+  keep.add('.git');
 
-    if (options?.dryRun) {
-      return { ok: true, deleted: toDelete };
-    }
+  const entries = fs.readdirSync(workspaceFolder);
+  const toDelete: string[] = [];
 
+  for (const entry of entries) {
+    if (keep.has(entry)) continue;
+    toDelete.push(entry);
+  }
+
+  if (!options.dryRun) {
     for (const entry of toDelete) {
-      const entryPath = path.join(workspaceFolder, entry);
-      const stat = await fs.promises.stat(entryPath);
-      if (stat.isDirectory()) {
-        await fs.promises.rm(entryPath, { recursive: true });
-      } else {
-        await fs.promises.unlink(entryPath);
-      }
+      const fullPath = path.join(workspaceFolder, entry);
+      fs.rmSync(fullPath, { recursive: true, force: true });
     }
-
-    return { ok: true, deleted: toDelete };
-  } catch (err) {
-    return { ok: false, error: String(err) };
   }
+
+  return { ok: true, deleted: toDelete };
 }

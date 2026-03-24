@@ -1,76 +1,74 @@
-// editor.ts - Editor panel (Edit and Browser tabs) for Blueprint Implementer
-
-import { getFontSize } from './storage';
+// editor.ts — Editor panel (Edit and Browser tabs)
 
 let currentFilePath: string | null = null;
-let editorTextarea: HTMLTextAreaElement | null = null;
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
-let isDirty = false;
+const editorTextarea = () => document.getElementById('editor-textarea') as HTMLTextAreaElement;
 
 export function initEditor(): void {
-  editorTextarea = document.getElementById('editor-textarea') as HTMLTextAreaElement;
+  const textarea = editorTextarea();
+  const editTab = document.querySelector('[data-tab="edit"]') as HTMLElement;
+  const browserTab = document.querySelector('[data-tab="browser"]') as HTMLElement;
+  const editPane = document.getElementById('edit-pane') as HTMLElement;
+  const browserPane = document.getElementById('browser-pane') as HTMLElement;
 
-  // Setup tabs
-  const tabs = document.querySelectorAll('.editor-tab');
-  tabs.forEach((tab) => {
-    tab.addEventListener('click', () => {
-      const tabName = tab.getAttribute('data-tab');
-      if (tabName) {
-        switchEditorTab(tabName);
-      }
+  // Tab switching
+  if (editTab) {
+    editTab.addEventListener('click', () => {
+      editTab.classList.add('active');
+      browserTab?.classList.remove('active');
+      editPane.style.display = 'flex';
+      browserPane.style.display = 'none';
     });
-  });
+  }
 
-  // Setup autosave
-  if (editorTextarea) {
-    editorTextarea.addEventListener('input', () => {
-      isDirty = true;
-      scheduleAutosave();
+  if (browserTab) {
+    browserTab.addEventListener('click', () => {
+      browserTab.classList.add('active');
+      editTab?.classList.remove('active');
+      browserPane.style.display = 'flex';
+      editPane.style.display = 'none';
     });
+  }
 
-    // Apply font size
-    editorTextarea.style.fontSize = `${getFontSize()}px`;
+  // Autosave on keystrokes
+  if (textarea) {
+    textarea.addEventListener('input', () => {
+      if (saveTimeout) clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(() => {
+        if (currentFilePath) {
+          window.electronAPI.writeFile(currentFilePath, textarea.value);
+        }
+      }, 500);
+    });
   }
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
       e.preventDefault();
-      saveCurrentFile();
+      if (currentFilePath && textarea) {
+        window.electronAPI.writeFile(currentFilePath, textarea.value);
+      }
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+      e.preventDefault();
+      const implementBtn = document.getElementById('implement-btn') as HTMLButtonElement;
+      if (implementBtn) implementBtn.click();
     }
   });
 }
 
-export function switchEditorTab(tabName: string): void {
-  // Update tab buttons
-  document.querySelectorAll('.editor-tab').forEach((tab) => {
-    tab.classList.toggle('active', tab.getAttribute('data-tab') === tabName);
-  });
-
-  // Update tab content
-  document.querySelectorAll('.editor-content .tab-content').forEach((content) => {
-    content.classList.toggle('active', content.getAttribute('data-tab') === tabName);
-  });
-}
-
-export async function openFile(filePath: string): Promise<void> {
-  // Save current file first
-  if (isDirty && currentFilePath) {
-    await saveCurrentFile();
+export function loadFile(filePath: string, content: string): void {
+  currentFilePath = filePath;
+  const textarea = editorTextarea();
+  if (textarea) {
+    textarea.value = content;
   }
-
-  try {
-    const content = await window.electronAPI.readFile(filePath);
-    currentFilePath = filePath;
-    if (editorTextarea) {
-      editorTextarea.value = content;
-    }
-    isDirty = false;
-
-    // Switch to Edit tab
-    switchEditorTab('edit');
-  } catch (err) {
-    console.error('Failed to open file:', err);
+  // Update the filename display
+  const fileLabel = document.getElementById('current-file-label');
+  if (fileLabel) {
+    const parts = filePath.split('/');
+    fileLabel.textContent = parts[parts.length - 1];
   }
 }
 
@@ -78,47 +76,10 @@ export function getCurrentFilePath(): string | null {
   return currentFilePath;
 }
 
-export function getEditorContent(): string {
-  return editorTextarea?.value || '';
-}
-
-export function setEditorContent(content: string): void {
-  if (editorTextarea) {
-    editorTextarea.value = content;
-    isDirty = true;
-  }
-}
-
 export function clearEditor(): void {
   currentFilePath = null;
-  if (editorTextarea) {
-    editorTextarea.value = '';
-  }
-  isDirty = false;
-}
-
-export function updateEditorFontSize(size: number): void {
-  if (editorTextarea) {
-    editorTextarea.style.fontSize = `${size}px`;
-  }
-}
-
-function scheduleAutosave(): void {
-  if (saveTimeout) {
-    clearTimeout(saveTimeout);
-  }
-  saveTimeout = setTimeout(() => {
-    saveCurrentFile();
-  }, 500);
-}
-
-async function saveCurrentFile(): Promise<void> {
-  if (!currentFilePath || !editorTextarea || !isDirty) return;
-
-  try {
-    await window.electronAPI.writeFile(currentFilePath, editorTextarea.value);
-    isDirty = false;
-  } catch (err) {
-    console.error('Failed to save file:', err);
-  }
+  const textarea = editorTextarea();
+  if (textarea) textarea.value = '';
+  const fileLabel = document.getElementById('current-file-label');
+  if (fileLabel) fileLabel.textContent = '';
 }

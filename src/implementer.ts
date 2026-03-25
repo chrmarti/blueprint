@@ -1,62 +1,53 @@
-// implementer.ts — Output panel (agent events, streaming terminal output)
+// Implementer module - output panel with xterm.js for agent events
 
 import { Terminal } from '@xterm/xterm';
-import { loadPreviewUrl } from './preview';
-import { refreshFileTree } from './files';
-import { addHistoryEntry, saveOutput } from './storage';
+import { refreshFileTree, getCurrentFolder } from './files.js';
+import { loadPreviewUrl } from './preview.js';
+import { loadSettings, addHistoryEntry } from './storage.js';
 
 let outputTerminal: Terminal | null = null;
-let outputBuffer = '';
 let isImplementing = false;
 
-export function initImplementer(): void {
-  const container = document.getElementById('output-terminal') as HTMLElement;
+export function initImplementerPanel(): void {
+  const container = document.getElementById('output-terminal');
   if (!container) return;
 
   outputTerminal = new Terminal({
     cursorBlink: false,
     cursorStyle: 'bar',
-    fontFamily: '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace',
     fontSize: 13,
+    fontFamily: '"SF Mono", "Fira Code", "Monaco", "Inconsolata", monospace',
+    theme: getOutputTheme(),
     disableStdin: true,
     convertEol: true,
-    theme: getOutputTheme(),
   });
 
   outputTerminal.open(container);
 
-  // Auto-fit on resize
+  // Set up resize observer
   const resizeObserver = new ResizeObserver(() => {
-    fitOutputTerminal(container);
+    fitOutputTerminal();
   });
   resizeObserver.observe(container);
 
   // Set up implement button
-  const implementBtn = document.getElementById('implement-btn') as HTMLButtonElement;
-  if (implementBtn) {
-    implementBtn.addEventListener('click', startImplementation);
-  }
+  document.getElementById('implement-btn')?.addEventListener('click', () => {
+    startImplementation();
+  });
 
-  // Save button
-  const saveBtn = document.getElementById('save-output-btn') as HTMLButtonElement;
-  if (saveBtn) {
-    saveBtn.addEventListener('click', () => {
-      window.electronAPI.saveFileDialog('output.txt', outputBuffer);
-    });
-  }
+  // Set up stop button
+  document.getElementById('stop-btn')?.addEventListener('click', () => {
+    stopImplementation();
+  });
 
-  // History button
-  const historyBtn = document.getElementById('history-btn') as HTMLButtonElement;
-  if (historyBtn) {
-    historyBtn.addEventListener('click', toggleHistory);
-  }
+  // Set up save button
+  document.getElementById('save-output-btn')?.addEventListener('click', () => {
+    saveOutput();
+  });
 
-  // Listen for copilot events
+  // Set up Copilot event handlers
   window.electronAPI.onCopilotChunk((chunk) => {
-    if (outputTerminal && typeof chunk === 'string') {
-      outputTerminal.write(chunk);
-      outputBuffer += chunk;
-    }
+    outputTerminal?.write(chunk);
   });
 
   window.electronAPI.onCopilotEvent((event) => {
@@ -64,181 +55,239 @@ export function initImplementer(): void {
   });
 }
 
-function fitOutputTerminal(container: HTMLElement): void {
+function fitOutputTerminal(): void {
   if (!outputTerminal) return;
+  
+  const container = document.getElementById('output-terminal');
+  if (!container) return;
 
-  const core = (outputTerminal as unknown as { _core: { _renderService: { dimensions: { css: { cell: { width: number; height: number } } } } } })._core;
-  if (!core?._renderService?.dimensions?.css?.cell) return;
+  const containerWidth = container.clientWidth;
+  const containerHeight = container.clientHeight;
 
-  const cellWidth = core._renderService.dimensions.css.cell.width;
-  const cellHeight = core._renderService.dimensions.css.cell.height;
+  if (containerWidth === 0 || containerHeight === 0) return;
 
-  if (cellWidth === 0 || cellHeight === 0) return;
+  const cellWidth = outputTerminal.options.fontSize! * 0.6;
+  const cellHeight = outputTerminal.options.fontSize! * 1.2;
 
-  const cols = Math.max(2, Math.floor(container.clientWidth / cellWidth));
-  const rows = Math.max(1, Math.floor(container.clientHeight / cellHeight));
+  const cols = Math.floor(containerWidth / cellWidth);
+  const rows = Math.floor(containerHeight / cellHeight);
 
-  outputTerminal.resize(cols, rows);
+  if (cols > 0 && rows > 0) {
+    outputTerminal.resize(cols, rows);
+  }
 }
 
-async function startImplementation(): Promise<void> {
+function getOutputTheme(): { background: string; foreground: string; cursor: string } {
+  const settings = loadSettings();
+  if (settings.theme === 'dark') {
+    return {
+      background: '#1e1e1e',
+      foreground: '#d4d4d4',
+      cursor: '#d4d4d4',
+    };
+  } else {
+    return {
+      background: '#ffffff',
+      foreground: '#1e1e1e',
+      cursor: '#1e1e1e',
+    };
+  }
+}
+
+export function updateOutputTheme(): void {
+  if (!outputTerminal) return;
+  outputTerminal.options.theme = getOutputTheme();
+}
+
+export async function startImplementation(): Promise<void> {
   if (isImplementing) return;
 
-  const status = document.getElementById('implement-status') as HTMLElement;
-  const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
-  const model = modelSelect?.value || 'claude-opus-4.6-1m';
+  const folder = getCurrentFolder();
+  if (!folder) {
+    setStatus('No folder open', 'error');
+    return;
+  }
 
-  // Check auth
+  // Check authentication
   const user = await window.electronAPI.getUser();
   if (!user) {
-    if (status) {
-      status.textContent = 'Not signed in';
-      status.className = 'status error';
-    }
+    setStatus('Not signed in', 'error');
+    return;
+  }
+
+  // Get blueprint content
+  let blueprintContent: string;
+  try {
+    blueprintContent = await window.electronAPI.readFile(`${folder}/blueprint.md`);
+  } catch {
+    setStatus('No blueprint.md found', 'error');
     return;
   }
 
   isImplementing = true;
-  outputBuffer = '';
-  if (outputTerminal) outputTerminal.clear();
+  setStatus('Implementing...', 'implementing');
+  
+  // Clear output
+  outputTerminal?.clear();
+  writeInfo('Starting implementation...\r\n');
 
-  if (status) {
-    status.textContent = 'Implementing...';
-    status.className = 'status implementing';
-  }
+  const settings = loadSettings();
 
-  const implementBtn = document.getElementById('implement-btn') as HTMLButtonElement;
-  if (implementBtn) implementBtn.disabled = true;
+  try {
+    const result = await window.electronAPI.implement({
+      model: settings.model,
+      userPrompt: blueprintContent,
+    });
 
-  // Read blueprint.md content for the user prompt
-  const folder = await window.electronAPI.getWorkspaceFolder();
-  let userPrompt = '';
-  if (folder) {
-    try {
-      userPrompt = await window.electronAPI.readFile(folder + '/blueprint.md');
-    } catch {
-      userPrompt = 'Implement the blueprint in this workspace.';
-    }
-  }
-
-  const result = await window.electronAPI.implement({
-    model,
-    userPrompt,
-  });
-
-  isImplementing = false;
-  if (implementBtn) implementBtn.disabled = false;
-
-  if (status) {
     if (result.ok) {
-      status.textContent = 'Implementation complete';
-      status.className = 'status success';
+      setStatus('Complete', 'success');
+      addHistoryEntry({
+        workspaceFolder: folder,
+        model: settings.model,
+        success: true,
+        outputSize: 0,
+      });
     } else {
-      status.textContent = result.error || 'Implementation failed';
-      status.className = 'status error';
+      setStatus('Failed', 'error');
+      writeError(result.error || 'Unknown error');
+      addHistoryEntry({
+        workspaceFolder: folder,
+        model: settings.model,
+        success: false,
+        outputSize: 0,
+      });
     }
+  } catch (error) {
+    setStatus('Failed', 'error');
+    writeError(error instanceof Error ? error.message : String(error));
+  } finally {
+    isImplementing = false;
+    await refreshFileTree();
   }
-
-  // Save to history
-  addHistoryEntry({
-    id: Date.now().toString(),
-    timestamp: Date.now(),
-    model,
-    status: result.ok ? 'success' : 'error',
-    output: outputBuffer,
-  });
-
-  saveOutput(outputBuffer);
-  await refreshFileTree();
 }
 
-function handleImplementEvent(event: ImplementEvent): void {
-  if (!outputTerminal) return;
+export async function stopImplementation(): Promise<void> {
+  if (!isImplementing) return;
+  
+  await window.electronAPI.stopImplement();
+  isImplementing = false;
+  setStatus('Stopped', 'error');
+  writeInfo('\r\n[Implementation stopped]\r\n');
+}
 
+function handleImplementEvent(event: { type: string; data?: Record<string, unknown> }): void {
   switch (event.type) {
-    case 'tool_start': {
-      const toolName = event.data.toolName as string;
-      const args = event.data.arguments as Record<string, unknown>;
-      let summary = '';
-
-      if (toolName === 'create_file' || toolName === 'write_file' || toolName === 'create') {
-        summary = (args?.path || args?.filePath || '') as string;
-      } else if (toolName === 'bash' || toolName === 'shell') {
-        summary = (args?.command || '') as string;
-      } else if (toolName === 'edit') {
-        summary = (args?.path || args?.filePath || '') as string;
-      } else {
-        const firstVal = Object.values(args || {})[0];
-        summary = typeof firstVal === 'string' ? firstVal : '';
-      }
-
-      outputTerminal.writeln(`\x1b[33m🔧 \x1b[1m${toolName}\x1b[22m ${summary}\x1b[0m`);
+    case 'session_start':
+      writeInfo(`Session started (model: ${event.data?.model})\r\n`);
       break;
-    }
-    case 'tool_complete': {
-      const name = event.data.toolName as string;
-      outputTerminal.writeln(`\x1b[32m✓ ${name} complete\x1b[0m`);
+    case 'turn_start':
+      writeDim(`turn started\r\n`);
       break;
-    }
-    case 'usage': {
-      const inTokens = (event.data.inputTokens as number || 0).toLocaleString();
-      const outTokens = (event.data.outputTokens as number || 0).toLocaleString();
-      const durationMs = event.data.duration as number || 0;
-      const durationSec = (durationMs / 1000).toFixed(1);
-      outputTerminal.writeln(
-        `\x1b[2m\x1b[37mtokens: ${inTokens} in / ${outTokens} out (${durationSec}s)\x1b[0m`
-      );
+    case 'turn_end':
+      writeDim(`turn ended\r\n`);
       break;
-    }
-    case 'error': {
-      const msg = event.data.message as string;
-      outputTerminal.writeln(`\x1b[31m\x1b[1m✗ ${msg}\x1b[0m`);
+    case 'tool_start':
+      writeToolStart(event.data?.toolName as string, event.data?.arguments as Record<string, unknown>);
       break;
-    }
-    case 'log': {
-      const logMsg = event.data.message as string;
-      outputTerminal.writeln(`\x1b[2m\x1b[37m${logMsg}\x1b[0m`);
+    case 'tool_complete':
+      writeToolComplete(event.data?.toolName as string);
       break;
-    }
+    case 'usage':
+      writeUsage(event.data as { inputTokens: number; outputTokens: number; duration: number });
+      break;
+    case 'error':
+      writeError(event.data?.message as string);
+      break;
     case 'files_changed':
       refreshFileTree();
       break;
-    case 'preview_url': {
-      const url = event.data.url as string;
-      if (url) {
-        loadPreviewUrl(url);
-        // Reveal output panel if collapsed
-        const outputPanel = document.getElementById('output-panel');
-        if (outputPanel?.classList.contains('collapsed')) {
-          outputPanel.classList.remove('collapsed');
-        }
+    case 'preview_url':
+      loadPreviewUrl(event.data?.url as string);
+      revealPreviewPanel();
+      break;
+    case 'done':
+      if (event.data?.success) {
+        writeInfo('\r\n✓ Implementation complete\r\n');
       }
       break;
+  }
+}
+
+function writeToolStart(toolName: string, args: Record<string, unknown>): void {
+  let summary = '';
+  
+  if (args) {
+    if (toolName === 'create' || toolName === 'create_file' || toolName === 'edit' || toolName === 'write_file') {
+      summary = args.path as string || args.file_path as string || '';
+    } else if (toolName === 'bash' || toolName === 'shell') {
+      const cmd = args.command as string || '';
+      summary = cmd.length > 60 ? cmd.substring(0, 60) + '...' : cmd;
+    } else if (toolName === 'view' || toolName === 'read_file') {
+      summary = args.path as string || args.file_path as string || '';
+    } else {
+      // Get first meaningful argument value
+      const values = Object.values(args).filter(v => typeof v === 'string');
+      if (values.length > 0) {
+        const val = values[0] as string;
+        summary = val.length > 60 ? val.substring(0, 60) + '...' : val;
+      }
     }
-    case 'done':
-      outputTerminal.writeln(`\x1b[2m\x1b[37msession complete\x1b[0m`);
-      break;
+  }
+
+  // Yellow tool icon, bold tool name
+  outputTerminal?.write(`\x1b[33m🔧\x1b[0m \x1b[1m${toolName}\x1b[0m ${summary}\r\n`);
+}
+
+function writeToolComplete(toolName: string): void {
+  // Green checkmark
+  outputTerminal?.write(`\x1b[32m✓\x1b[0m ${toolName} complete\r\n`);
+}
+
+function writeUsage(usage: { inputTokens: number; outputTokens: number; duration: number }): void {
+  const durationSec = (usage.duration / 1000).toFixed(1);
+  // Gray dimmed
+  outputTerminal?.write(`\x1b[90mtokens: ${usage.inputTokens.toLocaleString()} in / ${usage.outputTokens.toLocaleString()} out (${durationSec}s)\x1b[0m\r\n`);
+}
+
+function writeError(message: string): void {
+  // Red bold
+  outputTerminal?.write(`\x1b[31m\x1b[1m✗\x1b[0m \x1b[31m${message}\x1b[0m\r\n`);
+}
+
+function writeInfo(message: string): void {
+  outputTerminal?.write(message);
+}
+
+function writeDim(message: string): void {
+  outputTerminal?.write(`\x1b[90m${message}\x1b[0m`);
+}
+
+function setStatus(text: string, status: 'implementing' | 'success' | 'error'): void {
+  const statusEl = document.getElementById('implement-status');
+  if (statusEl) {
+    statusEl.textContent = text;
+    statusEl.className = `status ${status}`;
   }
 }
 
-function toggleHistory(): void {
-  const drawer = document.getElementById('history-drawer') as HTMLElement;
-  if (!drawer) return;
+function revealPreviewPanel(): void {
+  // Switch to Browser tab in editor panel
+  const browserTab = document.getElementById('browser-tab');
+  const editTab = document.getElementById('edit-tab');
+  const browserPanel = document.getElementById('browser-panel');
+  const editPanel = document.getElementById('edit-panel');
 
-  drawer.classList.toggle('open');
+  browserTab?.classList.add('active');
+  editTab?.classList.remove('active');
+  browserPanel?.classList.add('active');
+  editPanel?.classList.remove('active');
 }
 
-function getOutputTheme(): Record<string, string> {
-  const style = getComputedStyle(document.documentElement);
-  return {
-    background: style.getPropertyValue('--bg-surface').trim() || '#1e1e1e',
-    foreground: style.getPropertyValue('--text').trim() || '#cccccc',
-    cursor: 'transparent',
-  };
+async function saveOutput(): Promise<void> {
+  // Not implemented - output is in xterm terminal buffer
+  alert('Save output not yet implemented');
 }
 
-export function updateOutputTheme(): void {
-  if (outputTerminal) {
-    outputTerminal.options.theme = getOutputTheme();
-  }
+export function clearOutput(): void {
+  outputTerminal?.clear();
 }

@@ -1,46 +1,63 @@
 import packager from '@electron/packager';
-import { chmodSync, existsSync } from 'fs';
-import { join } from 'path';
+import * as fs from 'fs';
+import * as path from 'path';
+import { execSync } from 'child_process';
 
-const appPath = await packager({
+const appName = 'Blueprint';
+const outDir = 'release';
+
+// Package the Electron app
+const appPaths = await packager({
   dir: '.',
-  out: 'release',
-  name: 'Blueprint',
+  name: appName,
+  out: outDir,
   platform: 'darwin',
   arch: 'arm64',
+  asar: false, // Keep files unpacked for executable permissions
   overwrite: true,
-  asar: false,
   ignore: [
-    /^\/release/,
-    /^\/test/,
-    /^\/blueprint/,
-    /^\/src/,
-    /^\/scripts/,
-    /^\/cli/,
-    /^\/\.git/,
-    /^\/\.env/,
-    /\.ts$/,
-    /tsconfig\.json$/,
-    /build\.mjs$/,
-    /build\.package\.mjs$/,
-    /blueprint\.md$/,
-    /\.blueprintfiles$/,
+    /^\/src$/,
+    /^\/test$/,
+    /^\/blueprint$/,
+    /^\/\.git$/,
+    /^\/\.gitignore$/,
+    /^\/tsconfig\.json$/,
+    /^\/build\.mjs$/,
+    /^\/build\.package\.mjs$/,
+    /^\/\.blueprintfiles$/,
+    /^\/implement\.log$/,
   ],
 });
 
-console.log(`Packaged to: ${appPath}`);
+console.log(`Packaged app to: ${appPaths.join(', ')}`);
 
-// Fix executable bits on native binaries
-const resourcesPath = join(String(appPath), 'Blueprint.app', 'Contents', 'Resources', 'app');
+// Fix executable permissions on native binaries
+const appPath = appPaths[0];
+const resourcesPath = path.join(appPath, `${appName}.app`, 'Contents', 'Resources', 'app');
 
-const spawnHelperGlob = join(resourcesPath, 'node_modules', 'node-pty', 'prebuilds', 'darwin-arm64', 'spawn-helper');
-if (existsSync(spawnHelperGlob)) {
-  chmodSync(spawnHelperGlob, 0o755);
-  console.log('Fixed spawn-helper permissions');
+// Fix node-pty spawn-helper
+const spawnHelperGlob = path.join(resourcesPath, 'node_modules', 'node-pty', 'prebuilds', 'darwin-*', 'spawn-helper');
+try {
+  execSync(`chmod +x ${spawnHelperGlob}`, { shell: true });
+  console.log('Fixed node-pty spawn-helper permissions');
+} catch {
+  console.log('No node-pty spawn-helper found to fix');
 }
 
-const copilotBinary = join(resourcesPath, 'node_modules', '@github', 'copilot-darwin-arm64', 'copilot');
-if (existsSync(copilotBinary)) {
-  chmodSync(copilotBinary, 0o755);
+// Fix copilot native binary
+const copilotBinaryGlob = path.join(resourcesPath, 'node_modules', '@github', 'copilot-darwin-*', 'copilot');
+try {
+  execSync(`chmod +x ${copilotBinaryGlob}`, { shell: true });
   console.log('Fixed copilot binary permissions');
+} catch {
+  console.log('No copilot binary found to fix');
 }
+
+// Fix safehouse script
+const safehousePath = path.join(resourcesPath, 'scripts', 'safehouse');
+if (fs.existsSync(safehousePath)) {
+  fs.chmodSync(safehousePath, 0o755);
+  console.log('Fixed safehouse script permissions');
+}
+
+console.log('Packaging complete!');

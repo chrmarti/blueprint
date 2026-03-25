@@ -1,14 +1,19 @@
-# Tic-Tac-Toe
+# Tic-Tac-Toe Game
 
-A simple two-player tic-tac-toe game in a single HTML file.
+A simple browser-based tic-tac-toe game implemented as a single HTML file.
 
 ## Requirements
 
-- A 3×3 grid of clickable cells.
-- Players alternate turns: X goes first, then O.
-- Clicking an empty cell places the current player's mark.
-- The game detects wins (three in a row horizontally, vertically, or diagonally) and draws (all cells filled with no winner).
-- A status message above the board shows whose turn it is, or the result ("X wins!", "O wins!", "Draw!").
-- A "New Game" button resets the board.
-- All code in a single `index.html` file with embedded CSS and JavaScript.
-- The board should be centered on the page with a clean, modern look.
+- Two-player game (X and O take turns)
+- 3x3 grid displayed visually
+- Click a cell to place your mark
+- Detect wins (three in a row horizontally, vertically, or diagonally)
+- Detect draws (all cells filled, no winner)
+- Display whose turn it is
+- Display the winner or draw result
+- Reset button to start a new game
+- Clean, modern CSS styling with a dark theme
+
+## Implementation
+
+Generate a single `index.html` file that contains all HTML, CSS, and JavaScript inline. No external dependencies.

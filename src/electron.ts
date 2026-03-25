@@ -1,23 +1,28 @@
-// electron.ts — Electron main process
+// Electron main process - window management, IPC handlers, API proxy
 
-import {
-  app,
-  BrowserWindow,
-  dialog,
-  ipcMain,
-  Menu,
-  MenuItemConstructorOptions,
-} from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
-import { execFile } from 'child_process';
-import { resolveGitHubToken, fetchGitHubUser } from './auth';
-import { cleanWorkspace } from './clean';
-import { initAgent, implementWithAgent, stopAgent, listModels } from './copilot-agent';
+import * as https from 'https';
+import { execFile, spawn } from 'child_process';
+import { promisify } from 'util';
+import type { IPty } from 'node-pty';
+import { initAgent, implementWithAgent, chatWithAgent, stopAgent, listModels, ImplementEvent } from './copilot-agent.js';
+import { cleanWorkspace, CleanResult } from './clean.js';
+
+const execFileAsync = promisify(execFile);
 
 let mainWindow: BrowserWindow | null = null;
 let workspaceFolder: string | null = null;
-let ptyProcess: ReturnType<typeof import('node-pty').spawn> | null = null;
+let ptyProcess: IPty | null = null;
+let githubToken: string | null = null;
+
+// Parse command line arguments
+const args = process.argv.slice(2);
+const folderArg = args.find(arg => !arg.startsWith('-'));
+if (folderArg && fs.existsSync(folderArg)) {
+  workspaceFolder = path.resolve(folderArg);
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -33,15 +38,10 @@ function createWindow(): void {
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
-  // Handle command-line folder argument
-  const args = process.argv.slice(app.isPackaged ? 1 : 2);
-  const folderArg = args.find((a) => !a.startsWith('-') && !a.startsWith('.'));
-  if (folderArg) {
-    const resolved = path.resolve(folderArg);
-    if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
-      workspaceFolder = resolved;
-      mainWindow.setTitle(`Blueprint Implementer — ${path.basename(resolved)}`);
-    }
+  // Update title with workspace folder
+  if (workspaceFolder) {
+    const folderName = path.basename(workspaceFolder);
+    mainWindow.setTitle(`Blueprint Implementer - ${folderName}`);
   }
 
   mainWindow.on('closed', () => {
@@ -49,8 +49,8 @@ function createWindow(): void {
   });
 }
 
-function buildMenu(): void {
-  const template: MenuItemConstructorOptions[] = [
+function createMenu(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: 'File',
       submenu: [
@@ -58,16 +58,14 @@ function buildMenu(): void {
           label: 'Open Folder',
           accelerator: 'CmdOrCtrl+Shift+O',
           click: async () => {
-            if (!mainWindow) return;
-            const result = await dialog.showOpenDialog(mainWindow, {
+            const result = await dialog.showOpenDialog({
               properties: ['openDirectory'],
             });
             if (!result.canceled && result.filePaths.length > 0) {
               workspaceFolder = result.filePaths[0];
-              mainWindow.setTitle(
-                `Blueprint Implementer — ${path.basename(workspaceFolder)}`
-              );
-              mainWindow.webContents.send('folder:changed', workspaceFolder);
+              mainWindow?.webContents.send('folder-changed', workspaceFolder);
+              const folderName = path.basename(workspaceFolder);
+              mainWindow?.setTitle(`Blueprint Implementer - ${folderName}`);
             }
           },
         },
@@ -91,65 +89,112 @@ function buildMenu(): void {
       label: 'View',
       submenu: [
         { role: 'reload' },
-        { role: 'forceReload' },
         { role: 'toggleDevTools' },
         { type: 'separator' },
         { role: 'resetZoom' },
         { role: 'zoomIn' },
         { role: 'zoomOut' },
+        { type: 'separator' },
         { role: 'togglefullscreen' },
       ],
     },
   ];
 
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
+
+// GitHub token resolution
+async function resolveGitHubToken(): Promise<string | null> {
+  // Check environment variable first
+  if (process.env.GITHUB_TOKEN) {
+    return process.env.GITHUB_TOKEN;
+  }
+
+  // Fall back to gh auth token
+  try {
+    const { stdout } = await execFileAsync('gh', ['auth', 'token']);
+    return stdout.trim();
+  } catch {
+    return null;
+  }
+}
+
+// Fetch GitHub user
+async function fetchGitHubUser(token: string): Promise<{ login: string; avatar_url: string } | null> {
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        hostname: 'api.github.com',
+        path: '/user',
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'User-Agent': 'Blueprint-Implementer',
+          'Accept': 'application/json',
+        },
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            const user = JSON.parse(data);
+            resolve({ login: user.login, avatar_url: user.avatar_url });
+          } catch {
+            resolve(null);
+          }
+        });
+      }
+    );
+    req.on('error', () => resolve(null));
+    req.end();
+  });
 }
 
 // IPC Handlers
-function registerIpcHandlers(): void {
-  // Dialog
+function setupIpcHandlers(): void {
+  // Dialog handlers
   ipcMain.handle('dialog:openFolder', async () => {
-    if (!mainWindow) return null;
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog({
       properties: ['openDirectory'],
     });
     if (!result.canceled && result.filePaths.length > 0) {
       workspaceFolder = result.filePaths[0];
-      mainWindow.setTitle(
-        `Blueprint Implementer — ${path.basename(workspaceFolder)}`
-      );
+      const folderName = path.basename(workspaceFolder);
+      mainWindow?.setTitle(`Blueprint Implementer - ${folderName}`);
       return workspaceFolder;
     }
     return null;
   });
 
-  ipcMain.handle('dialog:saveFile', async (_event, defaultName: string, content: string) => {
-    if (!mainWindow) return null;
-    const result = await dialog.showSaveDialog(mainWindow, {
-      defaultPath: defaultName,
+  ipcMain.handle('dialog:saveFile', async (_event, defaultPath?: string) => {
+    const result = await dialog.showSaveDialog({
+      defaultPath: defaultPath || 'output.html',
     });
-    if (!result.canceled && result.filePath) {
-      fs.writeFileSync(result.filePath, content, 'utf-8');
-      return result.filePath;
-    }
-    return null;
+    return result.canceled ? null : result.filePath;
   });
 
-  // Workspace
+  // Workspace handlers
   ipcMain.handle('workspace:getFolder', () => workspaceFolder);
+  ipcMain.handle('workspace:setFolder', (_event, folder: string) => {
+    workspaceFolder = folder;
+    const folderName = path.basename(workspaceFolder);
+    mainWindow?.setTitle(`Blueprint Implementer - ${folderName}`);
+  });
 
-  // File system
+  // File system handlers
   ipcMain.handle('fs:readDir', async (_event, dirPath: string) => {
     try {
       const entries = fs.readdirSync(dirPath, { withFileTypes: true });
       return entries
-        .filter((e) => e.name !== '.git')
-        .map((e) => ({ name: e.name, isDirectory: e.isDirectory() }))
-        .sort((a, b) => {
-          if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-          return a.name.localeCompare(b.name);
-        });
-    } catch {
+        .filter((e) => e.name !== '.git') // Exclude .git
+        .map((e) => ({
+          name: e.name,
+          isDirectory: e.isDirectory(),
+        }));
+    } catch (error) {
+      console.error('Failed to read directory:', error);
       return [];
     }
   });
@@ -159,216 +204,264 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('fs:writeFile', async (_event, filePath: string, content: string) => {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    // Create parent directories if needed
+    const dir = path.dirname(filePath);
+    fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(filePath, content, 'utf-8');
   });
 
   ipcMain.handle('fs:delete', async (_event, entryPath: string) => {
-    fs.rmSync(entryPath, { recursive: true, force: true });
+    const stat = fs.statSync(entryPath);
+    if (stat.isDirectory()) {
+      fs.rmSync(entryPath, { recursive: true, force: true });
+    } else {
+      fs.unlinkSync(entryPath);
+    }
   });
 
-  ipcMain.handle('fs:cleanWorkspace', async (_event, options?: { dryRun?: boolean }) => {
+  ipcMain.handle('fs:cleanWorkspace', async (_event, options?: { dryRun?: boolean }): Promise<CleanResult> => {
     if (!workspaceFolder) {
-      return { ok: false, deleted: [], error: 'No workspace folder open.' };
+      return { ok: false, deleted: [], error: 'No workspace folder open' };
     }
     return cleanWorkspace(workspaceFolder, options);
   });
 
-  // Auth
+  // Authentication handlers
   ipcMain.handle('auth:getUser', async () => {
-    const token = await resolveGitHubToken();
-    if (!token) return null;
-    return fetchGitHubUser(token);
-  });
-
-  // Copilot
-  ipcMain.handle('copilot:listModels', async () => {
-    const token = await resolveGitHubToken();
-    if (!token) {
-      return { ok: false, models: [], error: 'No GitHub token available.' };
+    githubToken = await resolveGitHubToken();
+    if (!githubToken) {
+      return null;
     }
-    return listModels(token, app.getAppPath());
+    return fetchGitHubUser(githubToken);
   });
 
-  ipcMain.handle('copilot:init', async (_event, githubToken: string) => {
+  // Copilot handlers
+  ipcMain.handle('copilot:init', async (_event, token: string) => {
     try {
-      initAgent({ githubToken, appRoot: app.getAppPath() });
+      await initAgent({
+        githubToken: token,
+        appRoot: app.getAppPath(),
+      });
       return { ok: true };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { ok: false, error: message };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
 
-  ipcMain.handle(
-    'copilot:implement',
-    async (
-      _event,
-      options: { model: string; systemPrompt?: string; userPrompt: string }
-    ) => {
-      if (!workspaceFolder) {
-        return { ok: false, error: 'No workspace folder open.' };
-      }
-
-      // Auto-initialize agent if needed
-      const token = await resolveGitHubToken();
-      if (!token) {
-        return { ok: false, error: 'No GitHub token available.' };
-      }
-      initAgent({ githubToken: token, appRoot: app.getAppPath() });
-
-      // Read blueprint.md to append to system prompt
-      let blueprintContent = '';
-      const bpPath = path.join(workspaceFolder, 'blueprint.md');
-      if (fs.existsSync(bpPath)) {
-        blueprintContent = fs.readFileSync(bpPath, 'utf-8');
-      }
-
-      const systemPrompt = options.systemPrompt
-        ? options.systemPrompt + '\n\n' + blueprintContent
-        : undefined;
-
-      const result = await implementWithAgent({
-        model: options.model,
-        markdown: options.userPrompt || blueprintContent,
-        workspaceFolder,
-        systemPrompt: systemPrompt,
-        onEvent: (event) => {
-          if (mainWindow) {
-            if (event.type === 'chunk') {
-              mainWindow.webContents.send('copilot:chunk', event.data.content);
-            }
-            mainWindow.webContents.send('copilot:event', event);
-          }
-        },
-      });
-
-      return result;
+  ipcMain.handle('copilot:implement', async (_event, options: { model: string; systemPrompt?: string; userPrompt: string }) => {
+    if (!workspaceFolder) {
+      return { ok: false, error: 'No workspace folder open' };
     }
-  );
+
+    // Ensure we have a token
+    if (!githubToken) {
+      githubToken = await resolveGitHubToken();
+    }
+    if (!githubToken) {
+      return { ok: false, error: 'Not authenticated' };
+    }
+
+    // Initialize agent
+    await initAgent({
+      githubToken,
+      appRoot: app.getAppPath(),
+    });
+
+    // Read blueprint.md for system prompt context
+    let blueprintContent = '';
+    try {
+      blueprintContent = fs.readFileSync(path.join(workspaceFolder, 'blueprint.md'), 'utf-8');
+    } catch {
+      // Blueprint not found
+    }
+
+    const systemPrompt = blueprintContent
+      ? `${options.systemPrompt || ''}\n\nblueprint.md contents:\n\`\`\`markdown\n${blueprintContent}\n\`\`\``
+      : options.systemPrompt;
+
+    const onEvent = (event: ImplementEvent) => {
+      if (event.type === 'chunk') {
+        mainWindow?.webContents.send('copilot:chunk', event.data?.content || '');
+      } else {
+        mainWindow?.webContents.send('copilot:event', event);
+      }
+    };
+
+    const result = await implementWithAgent({
+      model: options.model,
+      markdown: options.userPrompt,
+      workspaceFolder,
+      systemPrompt,
+      onEvent,
+    });
+
+    return result;
+  });
 
   ipcMain.handle('copilot:stop', async () => {
-    stopAgent();
+    await stopAgent();
   });
 
-  // Git
+  ipcMain.handle('copilot:listModels', async () => {
+    if (!githubToken) {
+      githubToken = await resolveGitHubToken();
+    }
+    if (!githubToken) {
+      return { ok: false, error: 'Not authenticated', models: [] };
+    }
+
+    try {
+      const models = await listModels(githubToken, app.getAppPath());
+      return { ok: true, models };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error), models: [] };
+    }
+  });
+
+  // Chat handlers
+  ipcMain.handle('copilot:chat', async (_event, options: { model: string; systemPrompt: string; userPrompt: string; conversationHistory: Array<{ role: string; content: string }> }) => {
+    if (!workspaceFolder) {
+      return { ok: false, error: 'No workspace folder open' };
+    }
+
+    if (!githubToken) {
+      githubToken = await resolveGitHubToken();
+    }
+    if (!githubToken) {
+      return { ok: false, error: 'Not authenticated' };
+    }
+
+    await initAgent({
+      githubToken,
+      appRoot: app.getAppPath(),
+    });
+
+    const onEvent = (event: ImplementEvent) => {
+      if (event.type === 'chunk') {
+        mainWindow?.webContents.send('chat:chunk', event.data?.content || '');
+      } else {
+        mainWindow?.webContents.send('chat:event', event);
+      }
+    };
+
+    const result = await chatWithAgent({
+      model: options.model,
+      systemPrompt: options.systemPrompt,
+      userPrompt: options.userPrompt,
+      workspaceFolder,
+      conversationHistory: options.conversationHistory,
+      onEvent,
+    });
+
+    return result;
+  });
+
+  ipcMain.handle('copilot:stopChat', async () => {
+    await stopAgent();
+  });
+
+  // Git handlers
   ipcMain.handle('git:status', async () => {
     if (!workspaceFolder) return [];
-    return new Promise<{ status: string; file: string }[]>((resolve) => {
-      execFile(
-        'git',
-        ['status', '--porcelain'],
-        { cwd: workspaceFolder! },
-        (err, stdout) => {
-          if (err) {
-            resolve([]);
-            return;
-          }
-          const entries = stdout
-            .split('\n')
-            .filter((line) => line.length > 0)
-            .map((line) => ({
-              status: line.substring(0, 2).trim(),
-              file: line.substring(3),
-            }));
-          resolve(entries);
-        }
-      );
-    });
+
+    try {
+      const { stdout } = await execFileAsync('git', ['status', '--porcelain'], {
+        cwd: workspaceFolder,
+      });
+
+      return stdout
+        .split('\n')
+        .filter((line) => line.trim())
+        .map((line) => ({
+          status: line.substring(0, 2),
+          file: line.substring(3),
+        }));
+    } catch {
+      return [];
+    }
   });
 
-  // Terminal
+  // Terminal handlers
   ipcMain.handle('terminal:spawn', async () => {
+    // Kill existing pty
+    if (ptyProcess) {
+      ptyProcess.kill();
+      ptyProcess = null;
+    }
+
     try {
-      const nodePty = require('node-pty') as typeof import('node-pty');
-
-      if (ptyProcess) {
-        ptyProcess.kill();
-        ptyProcess = null;
-      }
-
+      // Dynamic import for node-pty (native module)
+      const pty = await import('node-pty');
+      
       const shell = process.env.SHELL || '/bin/zsh';
       const cwd = workspaceFolder || process.env.HOME || '/';
 
-      ptyProcess = nodePty.spawn(shell, [], {
+      ptyProcess = pty.spawn(shell, [], {
         name: 'xterm-256color',
         cols: 80,
         rows: 24,
         cwd,
-        env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>,
+        env: {
+          ...process.env,
+          TERM: 'xterm-256color',
+        },
       });
 
-      const thisPty = ptyProcess;
-
-      ptyProcess.onData((data: string) => {
-        if (mainWindow) {
-          mainWindow.webContents.send('terminal:data', data);
-        }
+      ptyProcess.onData((data) => {
+        mainWindow?.webContents.send('terminal:data', data);
       });
 
       ptyProcess.onExit(() => {
-        if (mainWindow) {
-          mainWindow.webContents.send('terminal:exit');
-        }
-        // Only null out if this pty is still the current one
-        // (a new spawn may have already replaced it)
-        if (ptyProcess === thisPty) {
-          ptyProcess = null;
-        }
+        mainWindow?.webContents.send('terminal:exit');
+        ptyProcess = null;
       });
 
       return { ok: true };
-    } catch (err) {
-      console.error('Failed to spawn terminal:', err);
+    } catch (error) {
+      console.error('Failed to spawn terminal:', error);
       return { ok: false };
     }
   });
 
   ipcMain.on('terminal:write', (_event, data: string) => {
-    if (ptyProcess) {
-      ptyProcess.write(data);
-    }
+    ptyProcess?.write(data);
   });
 
   ipcMain.on('terminal:resize', (_event, cols: number, rows: number) => {
-    if (ptyProcess) {
-      ptyProcess.resize(cols, rows);
-    }
+    ptyProcess?.resize(cols, rows);
   });
 
   ipcMain.on('terminal:kill', () => {
-    if (ptyProcess) {
-      ptyProcess.kill();
-      ptyProcess = null;
-    }
+    ptyProcess?.kill();
+    ptyProcess = null;
   });
 }
 
-// Folder changed listener — respawn terminal
-function handleFolderChange(folder: string): void {
-  workspaceFolder = folder;
-  if (mainWindow) {
-    mainWindow.setTitle(`Blueprint Implementer — ${path.basename(folder)}`);
-  }
-}
-
+// App lifecycle
 app.whenReady().then(() => {
-  buildMenu();
-  registerIpcHandlers();
+  createMenu();
   createWindow();
+  setupIpcHandlers();
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
+  });
 });
 
 app.on('window-all-closed', () => {
+  // Clean up pty
   if (ptyProcess) {
     ptyProcess.kill();
     ptyProcess = null;
   }
-  stopAgent();
-  app.quit();
+
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
 });
 
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
+app.on('before-quit', async () => {
+  await stopAgent();
 });

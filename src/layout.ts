@@ -1,93 +1,52 @@
-// layout.ts — Drag-handle resizable three-column layout
+// Layout module - drag-handle resizable three-column layout
 
 export function initLayout(): void {
-  const sidebar = document.getElementById('sidebar') as HTMLElement;
-  const editorPanel = document.getElementById('editor-panel') as HTMLElement;
-  const outputPanel = document.getElementById('output-panel') as HTMLElement;
-  const dragLeft = document.getElementById('drag-handle-left') as HTMLElement;
-  const dragRight = document.getElementById('drag-handle-right') as HTMLElement;
+  initVerticalDragHandles();
+  initHorizontalDragHandle();
+}
 
-  // Sidebar toggle
-  const sidebarToggle = document.getElementById('toggle-sidebar') as HTMLElement;
-  const outputToggle = document.getElementById('toggle-output') as HTMLElement;
+function initVerticalDragHandles(): void {
+  const leftHandle = document.getElementById('drag-handle-left');
+  const rightHandle = document.getElementById('drag-handle-right');
+  const sidebar = document.getElementById('sidebar');
+  const rightPanel = document.getElementById('right-panel');
 
-  if (sidebarToggle) {
-    sidebarToggle.addEventListener('click', () => {
-      sidebar.classList.toggle('collapsed');
-      dragLeft.classList.toggle('hidden', sidebar.classList.contains('collapsed'));
-    });
+  if (leftHandle && sidebar) {
+    setupVerticalDrag(leftHandle, sidebar, 'left');
   }
 
-  if (outputToggle) {
-    outputToggle.addEventListener('click', () => {
-      outputPanel.classList.toggle('collapsed');
-      dragRight.classList.toggle('hidden', outputPanel.classList.contains('collapsed'));
-    });
-  }
-
-  // Horizontal drag handles
-  initDragHandle(dragLeft, (dx) => {
-    const currentWidth = sidebar.offsetWidth;
-    const newWidth = Math.max(150, currentWidth + dx);
-    sidebar.style.width = newWidth + 'px';
-  });
-
-  initDragHandle(dragRight, (dx) => {
-    const currentWidth = outputPanel.offsetWidth;
-    const newWidth = Math.max(200, currentWidth - dx);
-    outputPanel.style.width = newWidth + 'px';
-  });
-
-  // Terminal drag handle (vertical)
-  const dragTerminal = document.getElementById('drag-handle-terminal') as HTMLElement;
-  const terminalPanel = document.getElementById('terminal-panel') as HTMLElement;
-
-  if (dragTerminal && terminalPanel) {
-    initVerticalDragHandle(dragTerminal, (dy) => {
-      const currentHeight = terminalPanel.offsetHeight;
-      const newHeight = Math.max(60, currentHeight - dy);
-      terminalPanel.style.height = newHeight + 'px';
-    });
+  if (rightHandle && rightPanel) {
+    setupVerticalDrag(rightHandle, rightPanel, 'right');
   }
 }
 
-function initDragHandle(handle: HTMLElement, onDrag: (dx: number) => void): void {
-  if (!handle) return;
-
+function setupVerticalDrag(handle: HTMLElement, panel: HTMLElement, side: 'left' | 'right'): void {
   let startX = 0;
+  let startWidth = 0;
 
-  const onMouseMove = (e: MouseEvent) => {
-    const dx = e.clientX - startX;
-    startX = e.clientX;
-    onDrag(dx);
-  };
-
-  const onMouseUp = () => {
-    document.removeEventListener('mousemove', onMouseMove);
-    document.removeEventListener('mouseup', onMouseUp);
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-  };
-
-  handle.addEventListener('mousedown', (e) => {
+  const onMouseDown = (e: MouseEvent) => {
     e.preventDefault();
     startX = e.clientX;
+    startWidth = panel.offsetWidth;
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  });
-}
-
-function initVerticalDragHandle(handle: HTMLElement, onDrag: (dy: number) => void): void {
-  if (!handle) return;
-
-  let startY = 0;
+  };
 
   const onMouseMove = (e: MouseEvent) => {
-    const dy = e.clientY - startY;
-    startY = e.clientY;
-    onDrag(dy);
+    const diff = e.clientX - startX;
+    let newWidth: number;
+    
+    if (side === 'left') {
+      newWidth = startWidth + diff;
+    } else {
+      newWidth = startWidth - diff;
+    }
+
+    // Enforce min/max widths
+    newWidth = Math.max(150, Math.min(600, newWidth));
+    panel.style.width = `${newWidth}px`;
   };
 
   const onMouseUp = () => {
@@ -97,12 +56,43 @@ function initVerticalDragHandle(handle: HTMLElement, onDrag: (dy: number) => voi
     document.body.style.userSelect = '';
   };
 
-  handle.addEventListener('mousedown', (e) => {
+  handle.addEventListener('mousedown', onMouseDown);
+}
+
+function initHorizontalDragHandle(): void {
+  const handle = document.getElementById('drag-handle-h');
+  const terminalPanel = document.getElementById('terminal-panel');
+
+  if (!handle || !terminalPanel) return;
+
+  let startY = 0;
+  let startHeight = 0;
+
+  const onMouseDown = (e: MouseEvent) => {
     e.preventDefault();
     startY = e.clientY;
-    document.body.style.cursor = 'row-resize';
-    document.body.style.userSelect = 'none';
+    startHeight = terminalPanel.offsetHeight;
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
-  });
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const onMouseMove = (e: MouseEvent) => {
+    const diff = startY - e.clientY;
+    let newHeight = startHeight + diff;
+
+    // Enforce min/max heights
+    newHeight = Math.max(60, Math.min(500, newHeight));
+    terminalPanel.style.height = `${newHeight}px`;
+  };
+
+  const onMouseUp = () => {
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  };
+
+  handle.addEventListener('mousedown', onMouseDown);
 }

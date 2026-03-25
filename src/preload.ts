@@ -1,39 +1,56 @@
-// preload.ts — Preload script for Electron contextBridge
+// Preload script - exposes safe IPC methods to renderer
 
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  // File system
-  openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
+  // Dialog
+  openFolderDialog: () => ipcRenderer.invoke('dialog:openFolder'),
+  saveFileDialog: (defaultPath?: string) => ipcRenderer.invoke('dialog:saveFile', defaultPath),
+
+  // Workspace
   getWorkspaceFolder: () => ipcRenderer.invoke('workspace:getFolder'),
+  setWorkspaceFolder: (folder: string) => ipcRenderer.invoke('workspace:setFolder', folder),
+
+  // File system
   readDir: (dirPath: string) => ipcRenderer.invoke('fs:readDir', dirPath),
   readFile: (filePath: string) => ipcRenderer.invoke('fs:readFile', filePath),
-  writeFile: (filePath: string, content: string) =>
-    ipcRenderer.invoke('fs:writeFile', filePath, content),
+  writeFile: (filePath: string, content: string) => ipcRenderer.invoke('fs:writeFile', filePath, content),
   deleteEntry: (entryPath: string) => ipcRenderer.invoke('fs:delete', entryPath),
-  cleanWorkspace: (options?: { dryRun?: boolean }) =>
-    ipcRenderer.invoke('fs:cleanWorkspace', options),
-  saveFileDialog: (defaultName: string, content: string) =>
-    ipcRenderer.invoke('dialog:saveFile', defaultName, content),
+  cleanWorkspace: (options?: { dryRun?: boolean }) => ipcRenderer.invoke('fs:cleanWorkspace', options),
 
-  // Auth
+  // Authentication
   getUser: () => ipcRenderer.invoke('auth:getUser'),
 
   // Copilot
-  listModels: () => ipcRenderer.invoke('copilot:listModels'),
   initCopilot: (githubToken: string) => ipcRenderer.invoke('copilot:init', githubToken),
   implement: (options: { model: string; systemPrompt?: string; userPrompt: string }) =>
     ipcRenderer.invoke('copilot:implement', options),
-  stopCopilot: () => ipcRenderer.invoke('copilot:stop'),
+  stopImplement: () => ipcRenderer.invoke('copilot:stop'),
+  listModels: () => ipcRenderer.invoke('copilot:listModels'),
   onCopilotChunk: (callback: (chunk: string) => void) => {
-    ipcRenderer.on('copilot:chunk', (_event, chunk: string) => callback(chunk));
+    ipcRenderer.on('copilot:chunk', (_event, chunk) => callback(chunk));
   },
-  onCopilotEvent: (callback: (event: ImplementEvent) => void) => {
-    ipcRenderer.on('copilot:event', (_event, data: ImplementEvent) => callback(data));
+  onCopilotEvent: (callback: (event: unknown) => void) => {
+    ipcRenderer.on('copilot:event', (_event, data) => callback(data));
   },
   removeCopilotListeners: () => {
     ipcRenderer.removeAllListeners('copilot:chunk');
     ipcRenderer.removeAllListeners('copilot:event');
+  },
+
+  // Chat
+  chat: (options: { model: string; systemPrompt: string; userPrompt: string; conversationHistory: Array<{ role: string; content: string }> }) =>
+    ipcRenderer.invoke('copilot:chat', options),
+  stopChat: () => ipcRenderer.invoke('copilot:stopChat'),
+  onChatChunk: (callback: (chunk: string) => void) => {
+    ipcRenderer.on('chat:chunk', (_event, chunk) => callback(chunk));
+  },
+  onChatEvent: (callback: (event: unknown) => void) => {
+    ipcRenderer.on('chat:event', (_event, data) => callback(data));
+  },
+  removeChatListeners: () => {
+    ipcRenderer.removeAllListeners('chat:chunk');
+    ipcRenderer.removeAllListeners('chat:event');
   },
 
   // Git
@@ -42,11 +59,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Terminal
   terminalSpawn: () => ipcRenderer.invoke('terminal:spawn'),
   terminalWrite: (data: string) => ipcRenderer.send('terminal:write', data),
-  terminalResize: (cols: number, rows: number) =>
-    ipcRenderer.send('terminal:resize', cols, rows),
+  terminalResize: (cols: number, rows: number) => ipcRenderer.send('terminal:resize', cols, rows),
   terminalKill: () => ipcRenderer.send('terminal:kill'),
   onTerminalData: (callback: (data: string) => void) => {
-    ipcRenderer.on('terminal:data', (_event, data: string) => callback(data));
+    ipcRenderer.on('terminal:data', (_event, data) => callback(data));
   },
   onTerminalExit: (callback: () => void) => {
     ipcRenderer.on('terminal:exit', () => callback());
@@ -57,9 +73,4 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeTerminalExitListeners: () => {
     ipcRenderer.removeAllListeners('terminal:exit');
   },
-});
-
-// Listen for folder changes from the main process
-ipcRenderer.on('folder:changed', (_event, folder: string) => {
-  window.dispatchEvent(new CustomEvent('folder-changed', { detail: folder }));
 });

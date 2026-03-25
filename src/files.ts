@@ -1,320 +1,333 @@
-// files.ts — Sidebar module (Files and Git tabs, tree view, open/save via IPC)
+// Files module - sidebar file browser with Files and Git tabs
 
-import { loadFile, getCurrentFilePath, clearEditor } from './editor';
-
-let workspaceFolder: string | null = null;
+let currentFolder: string | null = null;
 let selectedDirectory: string | null = null;
+let currentFile: string | null = null;
+let expandedDirs = new Set<string>();
+let onFileSelectCallback: ((filePath: string) => void) | null = null;
 
-const fileIcons: Record<string, string> = {
-  '.md': '📝',
-  '.html': '🌐',
-  '.htm': '🌐',
-  '.ts': '📜',
-  '.js': '📜',
-  '.mjs': '📜',
-  '.cjs': '📜',
-  '.json': '📋',
-  '.css': '🎨',
-  '.scss': '🎨',
-  '.png': '🖼️',
-  '.jpg': '🖼️',
-  '.svg': '🖼️',
-  '.txt': '📄',
-};
-
-function getFileIcon(name: string): string {
-  const ext = name.substring(name.lastIndexOf('.'));
-  return fileIcons[ext] || '📄';
+export function setOnFileSelect(callback: (filePath: string) => void): void {
+  onFileSelectCallback = callback;
 }
 
-export function initFiles(): void {
-  const filesTab = document.querySelector('[data-sidebar-tab="files"]') as HTMLElement;
-  const gitTab = document.querySelector('[data-sidebar-tab="git"]') as HTMLElement;
-  const filesPane = document.getElementById('files-pane') as HTMLElement;
-  const gitPane = document.getElementById('git-pane') as HTMLElement;
-
-  if (filesTab) {
-    filesTab.addEventListener('click', () => {
-      filesTab.classList.add('active');
-      gitTab?.classList.remove('active');
-      filesPane.style.display = 'block';
-      gitPane.style.display = 'none';
-    });
-  }
-
-  if (gitTab) {
-    gitTab.addEventListener('click', () => {
-      gitTab.classList.add('active');
-      filesTab?.classList.remove('active');
-      gitPane.style.display = 'block';
-      filesPane.style.display = 'none';
-      refreshGitStatus();
-    });
-  }
-
-  // Toolbar buttons
-  const newFileBtn = document.getElementById('new-file-btn');
-  const newFolderBtn = document.getElementById('new-folder-btn');
-  const refreshBtn = document.getElementById('refresh-btn');
-  const deleteBtn = document.getElementById('delete-btn');
-
-  if (newFileBtn) newFileBtn.addEventListener('click', handleNewFile);
-  if (newFolderBtn) newFolderBtn.addEventListener('click', handleNewFolder);
-  if (refreshBtn) refreshBtn.addEventListener('click', () => refreshFileTree());
-  if (deleteBtn) deleteBtn.addEventListener('click', handleDelete);
-
-  // Listen for folder changes from menu
-  window.addEventListener('folder-changed', ((e: CustomEvent<string>) => {
-    setWorkspaceFolder(e.detail);
-  }) as EventListener);
+export function getCurrentFile(): string | null {
+  return currentFile;
 }
 
-export async function setWorkspaceFolder(folder: string): Promise<void> {
-  workspaceFolder = folder;
-  selectedDirectory = null;
+export function setCurrentFile(filePath: string | null): void {
+  currentFile = filePath;
+}
 
-  // Update folder name in toolbar
-  const folderLabel = document.getElementById('folder-name');
-  if (folderLabel) {
-    folderLabel.textContent = folder.split('/').pop() || folder;
+export function getCurrentFolder(): string | null {
+  return currentFolder;
+}
+
+export async function initFilesPanel(): Promise<void> {
+  const folder = await window.electronAPI.getWorkspaceFolder();
+  if (folder) {
+    await openFolder(folder);
   }
 
+  // Set up tab switching
+  const filesTab = document.getElementById('files-tab');
+  const gitTab = document.getElementById('git-tab');
+  const filesPanel = document.getElementById('files-panel');
+  const gitPanel = document.getElementById('git-panel');
+
+  filesTab?.addEventListener('click', () => {
+    filesTab.classList.add('active');
+    gitTab?.classList.remove('active');
+    filesPanel?.classList.add('active');
+    gitPanel?.classList.remove('active');
+  });
+
+  gitTab?.addEventListener('click', () => {
+    gitTab.classList.add('active');
+    filesTab?.classList.remove('active');
+    gitPanel?.classList.add('active');
+    filesPanel?.classList.remove('active');
+    refreshGitStatus();
+  });
+
+  // Set up toolbar actions
+  document.getElementById('new-file-btn')?.addEventListener('click', () => createNewFile());
+  document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder());
+  document.getElementById('refresh-btn')?.addEventListener('click', () => refreshFileTree());
+  document.getElementById('delete-btn')?.addEventListener('click', () => deleteSelected());
+}
+
+export async function openFolder(folder: string): Promise<void> {
+  currentFolder = folder;
+  await window.electronAPI.setWorkspaceFolder(folder);
+  expandedDirs.clear();
+  expandedDirs.add(folder);
   await refreshFileTree();
+  updateFolderDisplay();
+}
+
+function updateFolderDisplay(): void {
+  const folderName = document.getElementById('folder-name');
+  if (folderName && currentFolder) {
+    const name = currentFolder.split('/').pop() || currentFolder;
+    folderName.textContent = name;
+    folderName.title = currentFolder;
+  }
 }
 
 export async function refreshFileTree(): Promise<void> {
-  if (!workspaceFolder) return;
+  if (!currentFolder) return;
 
-  const tree = document.getElementById('file-tree') as HTMLElement;
-  if (!tree) return;
+  const fileTree = document.getElementById('file-tree');
+  if (!fileTree) return;
 
-  tree.innerHTML = '';
-  await renderDirectory(tree, workspaceFolder, 0);
+  try {
+    fileTree.innerHTML = '';
+    await renderDirectory(fileTree, currentFolder, 0);
+  } catch (error) {
+    console.error('Failed to refresh file tree:', error);
+    fileTree.innerHTML = '<div class="error">Failed to load files</div>';
+  }
 }
 
-async function renderDirectory(
-  container: HTMLElement,
-  dirPath: string,
-  depth: number
-): Promise<void> {
+async function renderDirectory(container: HTMLElement, dirPath: string, depth: number): Promise<void> {
   const entries = await window.electronAPI.readDir(dirPath);
+  
+  // Sort: directories first, then alphabetically
+  entries.sort((a, b) => {
+    if (a.isDirectory !== b.isDirectory) {
+      return a.isDirectory ? -1 : 1;
+    }
+    return a.name.localeCompare(b.name);
+  });
 
   for (const entry of entries) {
-    const fullPath = dirPath + '/' + entry.name;
-    const row = document.createElement('div');
-    row.className = 'tree-entry';
-    row.dataset.path = fullPath;
-    row.style.paddingLeft = depth * 16 + 8 + 'px';
+    const fullPath = `${dirPath}/${entry.name}`;
+    const item = document.createElement('div');
+    item.className = 'file-tree-item';
+    item.dataset.path = fullPath;
+    item.style.paddingLeft = `${depth * 16 + 8}px`;
 
     if (entry.isDirectory) {
-      row.innerHTML = `<span class="tree-arrow">▸</span> <span class="tree-icon">📁</span> <span class="tree-name">${entry.name}</span>`;
-      row.classList.add('directory');
+      const isExpanded = expandedDirs.has(fullPath);
+      const arrow = isExpanded ? '▾' : '▸';
+      item.innerHTML = `<span class="arrow">${arrow}</span> <span class="icon">📁</span> <span class="name">${entry.name}</span>`;
+      item.classList.add('directory');
+      
+      if (selectedDirectory === fullPath) {
+        item.classList.add('selected');
+      }
 
-      const childContainer = document.createElement('div');
-      childContainer.className = 'tree-children';
-      childContainer.style.display = 'none';
-
-      row.addEventListener('click', async (e) => {
+      item.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const arrow = row.querySelector('.tree-arrow') as HTMLElement;
-        const isExpanded = childContainer.style.display !== 'none';
-
-        // Toggle expand/collapse
-        if (isExpanded) {
-          childContainer.style.display = 'none';
-          arrow.textContent = '▸';
+        
+        // Toggle expansion
+        if (expandedDirs.has(fullPath)) {
+          expandedDirs.delete(fullPath);
         } else {
-          if (childContainer.children.length === 0) {
-            await renderDirectory(childContainer, fullPath, depth + 1);
-          }
-          childContainer.style.display = 'block';
-          arrow.textContent = '▾';
+          expandedDirs.add(fullPath);
         }
-
+        
         // Select directory
-        clearDirectorySelection();
-        row.classList.add('selected');
         selectedDirectory = fullPath;
+        currentFile = null;
+        
+        await refreshFileTree();
       });
 
-      container.appendChild(row);
-      container.appendChild(childContainer);
+      container.appendChild(item);
+
+      // Render children if expanded
+      if (isExpanded) {
+        const childContainer = document.createElement('div');
+        childContainer.className = 'directory-children';
+        await renderDirectory(childContainer, fullPath, depth + 1);
+        container.appendChild(childContainer);
+      }
     } else {
-      row.innerHTML = `<span class="tree-icon">${getFileIcon(entry.name)}</span> <span class="tree-name">${entry.name}</span>`;
-      row.classList.add('file');
+      const icon = getFileIcon(entry.name);
+      item.innerHTML = `<span class="arrow"></span> <span class="icon">${icon}</span> <span class="name">${entry.name}</span>`;
+      item.classList.add('file');
+      
+      if (currentFile === fullPath) {
+        item.classList.add('active');
+      }
 
-      row.addEventListener('click', async (e) => {
+      item.addEventListener('click', async (e) => {
         e.stopPropagation();
-        clearDirectorySelection();
-        clearFileSelection();
-        row.classList.add('selected');
-
-        const content = await window.electronAPI.readFile(fullPath);
-        loadFile(fullPath, content);
+        selectedDirectory = null;
+        currentFile = fullPath;
+        
+        if (onFileSelectCallback) {
+          onFileSelectCallback(fullPath);
+        }
+        
+        await refreshFileTree();
       });
 
-      container.appendChild(row);
+      container.appendChild(item);
     }
   }
 }
 
-function clearDirectorySelection(): void {
-  document.querySelectorAll('.tree-entry.selected').forEach((el) => {
-    el.classList.remove('selected');
-  });
-  selectedDirectory = null;
+function getFileIcon(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'md':
+      return '📝';
+    case 'html':
+    case 'htm':
+      return '🌐';
+    case 'ts':
+    case 'tsx':
+    case 'js':
+    case 'jsx':
+    case 'mjs':
+    case 'cjs':
+      return '📜';
+    case 'json':
+      return '📋';
+    case 'css':
+    case 'scss':
+    case 'sass':
+      return '🎨';
+    case 'png':
+    case 'jpg':
+    case 'jpeg':
+    case 'gif':
+    case 'svg':
+      return '🖼️';
+    default:
+      return '📄';
+  }
 }
 
-function clearFileSelection(): void {
-  document.querySelectorAll('.tree-entry.file.selected').forEach((el) => {
-    el.classList.remove('selected');
-  });
+async function createNewFile(): Promise<void> {
+  if (!currentFolder) return;
+
+  const targetDir = selectedDirectory || (currentFile ? currentFile.split('/').slice(0, -1).join('/') : currentFolder);
+  
+  const fileName = prompt('Enter file name:');
+  if (!fileName) return;
+
+  const fullPath = `${targetDir}/${fileName}`;
+  
+  try {
+    await window.electronAPI.writeFile(fullPath, '');
+    await refreshFileTree();
+    
+    // Select the new file
+    currentFile = fullPath;
+    if (onFileSelectCallback) {
+      onFileSelectCallback(fullPath);
+    }
+  } catch (error) {
+    console.error('Failed to create file:', error);
+    alert('Failed to create file');
+  }
 }
 
-async function handleNewFile(): Promise<void> {
-  const parentDir = selectedDirectory || getActiveFileParent() || workspaceFolder;
-  if (!parentDir) return;
+async function createNewFolder(): Promise<void> {
+  if (!currentFolder) return;
 
-  const name = await showInlineInput(parentDir);
-  if (!name) return;
+  const targetDir = selectedDirectory || currentFolder;
+  
+  const folderName = prompt('Enter folder name:');
+  if (!folderName) return;
 
-  const filePath = parentDir + '/' + name;
-  await window.electronAPI.writeFile(filePath, '');
-  await refreshFileTree();
-  const content = await window.electronAPI.readFile(filePath);
-  loadFile(filePath, content);
+  const fullPath = `${targetDir}/${folderName}`;
+  
+  try {
+    // Create folder by writing a .keep file
+    await window.electronAPI.writeFile(`${fullPath}/.keep`, '');
+    expandedDirs.add(fullPath);
+    await refreshFileTree();
+  } catch (error) {
+    console.error('Failed to create folder:', error);
+    alert('Failed to create folder');
+  }
 }
 
-async function handleNewFolder(): Promise<void> {
-  const parentDir = selectedDirectory || workspaceFolder;
-  if (!parentDir) return;
+async function deleteSelected(): Promise<void> {
+  const pathToDelete = selectedDirectory || currentFile;
+  if (!pathToDelete) {
+    alert('No file or folder selected');
+    return;
+  }
 
-  const name = await showInlineInput(parentDir);
-  if (!name) return;
-
-  const folderPath = parentDir + '/' + name;
-  await window.electronAPI.writeFile(folderPath + '/.keep', '');
-  await refreshFileTree();
-}
-
-async function handleDelete(): Promise<void> {
-  const targetPath = selectedDirectory || getCurrentFilePath();
-  if (!targetPath) return;
-
-  const isDir = selectedDirectory !== null;
-  const name = targetPath.split('/').pop() || targetPath;
-  const message = isDir
+  const isDirectory = selectedDirectory !== null;
+  const name = pathToDelete.split('/').pop();
+  const message = isDirectory
     ? `Delete folder "${name}" and all its contents?`
     : `Delete file "${name}"?`;
 
   if (!confirm(message)) return;
 
-  await window.electronAPI.deleteEntry(targetPath);
-
-  if (!isDir && getCurrentFilePath() === targetPath) {
-    clearEditor();
-  }
-
-  selectedDirectory = null;
-  await refreshFileTree();
-}
-
-function getActiveFileParent(): string | null {
-  const currentPath = getCurrentFilePath();
-  if (!currentPath) return null;
-  const parts = currentPath.split('/');
-  parts.pop();
-  return parts.join('/');
-}
-
-function showInlineInput(parentDir: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    // Find the tree entry for the parent directory
-    const parentEntry = document.querySelector(
-      `.tree-entry[data-path="${parentDir}"]`
-    ) as HTMLElement;
-
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'inline-input';
-    input.placeholder = 'name...';
-
-    const commit = () => {
-      const value = input.value.trim();
-      input.remove();
-      resolve(value || null);
-    };
-
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') commit();
-      if (e.key === 'Escape') {
-        input.remove();
-        resolve(null);
-      }
-    });
-    input.addEventListener('blur', commit);
-
-    if (parentEntry && parentEntry.nextElementSibling) {
-      parentEntry.parentElement!.insertBefore(input, parentEntry.nextElementSibling);
-    } else {
-      const tree = document.getElementById('file-tree') as HTMLElement;
-      tree.appendChild(input);
+  try {
+    await window.electronAPI.deleteEntry(pathToDelete);
+    
+    if (currentFile === pathToDelete) {
+      currentFile = null;
     }
-
-    input.focus();
-  });
+    selectedDirectory = null;
+    
+    await refreshFileTree();
+  } catch (error) {
+    console.error('Failed to delete:', error);
+    alert('Failed to delete');
+  }
 }
 
-// Git status
+// Git status functionality
 export async function refreshGitStatus(): Promise<void> {
-  const gitList = document.getElementById('git-list') as HTMLElement;
-  if (!gitList) return;
+  const gitPanel = document.getElementById('git-panel');
+  const gitList = document.getElementById('git-list');
+  if (!gitPanel || !gitList) return;
 
-  const entries = await window.electronAPI.gitStatus();
-  gitList.innerHTML = '';
-
-  if (entries.length === 0) {
-    gitList.innerHTML = '<div class="git-empty">No changes</div>';
-    return;
-  }
-
-  for (const entry of entries) {
-    const row = document.createElement('div');
-    row.className = 'git-entry';
-
-    const badge = document.createElement('span');
-    badge.className = 'git-badge';
-    badge.textContent = entry.status.charAt(0) || '?';
-
-    const statusChar = entry.status.charAt(0);
-    switch (statusChar) {
-      case 'M':
-        badge.classList.add('git-modified');
-        break;
-      case 'A':
-        badge.classList.add('git-added');
-        break;
-      case 'D':
-        badge.classList.add('git-deleted');
-        break;
-      case '?':
-        badge.classList.add('git-untracked');
-        break;
-      case 'R':
-        badge.classList.add('git-renamed');
-        break;
+  try {
+    const entries = await window.electronAPI.gitStatus();
+    
+    if (entries.length === 0) {
+      gitList.innerHTML = '<div class="no-changes">No changes</div>';
+      return;
     }
 
-    const fileName = document.createElement('span');
-    fileName.className = 'git-file';
-    fileName.textContent = entry.file;
-
-    row.appendChild(badge);
-    row.appendChild(fileName);
-    gitList.appendChild(row);
+    gitList.innerHTML = '';
+    for (const entry of entries) {
+      const item = document.createElement('div');
+      item.className = 'git-item';
+      
+      const badge = document.createElement('span');
+      badge.className = `git-badge ${getStatusClass(entry.status)}`;
+      badge.textContent = entry.status.trim().charAt(0) || '?';
+      
+      const file = document.createElement('span');
+      file.className = 'git-file';
+      file.textContent = entry.file;
+      
+      item.appendChild(badge);
+      item.appendChild(file);
+      gitList.appendChild(item);
+    }
+  } catch (error) {
+    console.error('Failed to get git status:', error);
+    gitList.innerHTML = '<div class="error">Failed to get git status</div>';
   }
 }
 
-export function getWorkspaceFolder(): string | null {
-  return workspaceFolder;
+function getStatusClass(status: string): string {
+  const code = status.trim().charAt(0);
+  switch (code) {
+    case 'M':
+      return 'modified';
+    case 'A':
+      return 'added';
+    case 'D':
+      return 'deleted';
+    case 'R':
+      return 'renamed';
+    case '?':
+      return 'untracked';
+    default:
+      return 'other';
+  }
 }

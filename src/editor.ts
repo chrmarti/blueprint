@@ -1,85 +1,126 @@
-// editor.ts — Editor panel (Edit and Browser tabs)
+// Editor module - editor panel with Edit and Browser tabs
 
-let currentFilePath: string | null = null;
+import { refreshFileTree, getCurrentFile, setCurrentFile } from './files.js';
+
+let editorContent = '';
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
-const editorTextarea = () => document.getElementById('editor-textarea') as HTMLTextAreaElement;
 
-export function initEditor(): void {
-  const textarea = editorTextarea();
-  const editTab = document.querySelector('[data-tab="edit"]') as HTMLElement;
-  const browserTab = document.querySelector('[data-tab="browser"]') as HTMLElement;
-  const editPane = document.getElementById('edit-pane') as HTMLElement;
-  const browserPane = document.getElementById('browser-pane') as HTMLElement;
+export function initEditorPanel(): void {
+  const textarea = document.getElementById('editor-textarea') as HTMLTextAreaElement;
+  if (!textarea) return;
+
+  // Handle input with autosave
+  textarea.addEventListener('input', () => {
+    editorContent = textarea.value;
+    scheduleAutosave();
+  });
 
   // Tab switching
-  if (editTab) {
-    editTab.addEventListener('click', () => {
-      editTab.classList.add('active');
-      browserTab?.classList.remove('active');
-      editPane.style.display = 'flex';
-      browserPane.style.display = 'none';
-    });
-  }
+  const editTab = document.getElementById('edit-tab');
+  const browserTab = document.getElementById('browser-tab');
+  const editPanel = document.getElementById('edit-panel');
+  const browserPanel = document.getElementById('browser-panel');
 
-  if (browserTab) {
-    browserTab.addEventListener('click', () => {
-      browserTab.classList.add('active');
-      editTab?.classList.remove('active');
-      browserPane.style.display = 'flex';
-      editPane.style.display = 'none';
-    });
-  }
+  editTab?.addEventListener('click', () => {
+    editTab.classList.add('active');
+    browserTab?.classList.remove('active');
+    editPanel?.classList.add('active');
+    browserPanel?.classList.remove('active');
+  });
 
-  // Autosave on keystrokes
-  if (textarea) {
-    textarea.addEventListener('input', () => {
-      if (saveTimeout) clearTimeout(saveTimeout);
-      saveTimeout = setTimeout(() => {
-        if (currentFilePath) {
-          window.electronAPI.writeFile(currentFilePath, textarea.value);
-        }
-      }, 500);
-    });
-  }
+  browserTab?.addEventListener('click', () => {
+    browserTab.classList.add('active');
+    editTab?.classList.remove('active');
+    browserPanel?.classList.add('active');
+    editPanel?.classList.remove('active');
+  });
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
       e.preventDefault();
-      if (currentFilePath && textarea) {
-        window.electronAPI.writeFile(currentFilePath, textarea.value);
-      }
+      saveCurrentFile();
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
       e.preventDefault();
-      const implementBtn = document.getElementById('implement-btn') as HTMLButtonElement;
-      if (implementBtn) implementBtn.click();
+      document.getElementById('implement-btn')?.click();
     }
   });
 }
 
-export function loadFile(filePath: string, content: string): void {
-  currentFilePath = filePath;
-  const textarea = editorTextarea();
+export async function loadFile(filePath: string): Promise<void> {
+  try {
+    const content = await window.electronAPI.readFile(filePath);
+    editorContent = content;
+    
+    const textarea = document.getElementById('editor-textarea') as HTMLTextAreaElement;
+    if (textarea) {
+      textarea.value = content;
+    }
+    
+    setCurrentFile(filePath);
+    
+    // Update file info display
+    const fileInfo = document.getElementById('file-info');
+    if (fileInfo) {
+      const name = filePath.split('/').pop() || filePath;
+      fileInfo.textContent = name;
+    }
+  } catch (error) {
+    console.error('Failed to load file:', error);
+    alert('Failed to load file');
+  }
+}
+
+export function getEditorContent(): string {
+  return editorContent;
+}
+
+export function setEditorContent(content: string): void {
+  editorContent = content;
+  const textarea = document.getElementById('editor-textarea') as HTMLTextAreaElement;
   if (textarea) {
     textarea.value = content;
   }
-  // Update the filename display
-  const fileLabel = document.getElementById('current-file-label');
-  if (fileLabel) {
-    const parts = filePath.split('/');
-    fileLabel.textContent = parts[parts.length - 1];
+}
+
+function scheduleAutosave(): void {
+  if (saveTimeout) {
+    clearTimeout(saveTimeout);
+  }
+  saveTimeout = setTimeout(saveCurrentFile, 500);
+}
+
+async function saveCurrentFile(): Promise<void> {
+  const filePath = getCurrentFile();
+  if (!filePath) return;
+
+  try {
+    await window.electronAPI.writeFile(filePath, editorContent);
+    
+    // Update status
+    const status = document.getElementById('editor-status');
+    if (status) {
+      status.textContent = 'Saved';
+      setTimeout(() => {
+        status.textContent = '';
+      }, 2000);
+    }
+  } catch (error) {
+    console.error('Failed to save file:', error);
   }
 }
 
-export function getCurrentFilePath(): string | null {
-  return currentFilePath;
-}
-
-export function clearEditor(): void {
-  currentFilePath = null;
-  const textarea = editorTextarea();
-  if (textarea) textarea.value = '';
-  const fileLabel = document.getElementById('current-file-label');
-  if (fileLabel) fileLabel.textContent = '';
+export async function clearEditor(): Promise<void> {
+  editorContent = '';
+  const textarea = document.getElementById('editor-textarea') as HTMLTextAreaElement;
+  if (textarea) {
+    textarea.value = '';
+  }
+  setCurrentFile(null);
+  
+  const fileInfo = document.getElementById('file-info');
+  if (fileInfo) {
+    fileInfo.textContent = '';
+  }
 }

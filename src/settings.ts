@@ -1,207 +1,253 @@
-// settings.ts — Settings modal, history drawer, theme, import/export
+// Settings module - settings modal, theme, history drawer
 
-import { loadSettings, saveSettings, loadHistory } from './storage';
-import { updateTerminalTheme } from './terminal';
-import { updateOutputTheme } from './implementer';
+import { loadSettings, saveSettings, loadHistory, exportProjectState, importProjectState, Settings } from './storage.js';
+import { updateTerminalTheme } from './terminal.js';
+import { updateOutputTheme } from './implementer.js';
 
-let settingsModal: HTMLElement | null = null;
+let currentSettings: Settings;
 
-export function initSettings(): void {
-  settingsModal = document.getElementById('settings-modal') as HTMLElement;
-  const settingsBtn = document.getElementById('settings-btn') as HTMLElement;
-  const closeBtn = document.getElementById('settings-close-btn') as HTMLElement;
+export async function initSettingsPanel(): Promise<void> {
+  currentSettings = loadSettings();
+  applyTheme(currentSettings.theme);
 
-  if (settingsBtn) {
-    settingsBtn.addEventListener('click', () => openSettings());
-  }
-
-  if (closeBtn) {
-    closeBtn.addEventListener('click', () => closeSettings());
-  }
-
-  // Close with Esc
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && settingsModal?.classList.contains('open')) {
-      closeSettings();
-    }
+  // Settings button
+  document.getElementById('settings-btn')?.addEventListener('click', () => {
+    openSettingsModal();
   });
 
-  // Close when clicking backdrop
-  if (settingsModal) {
-    settingsModal.addEventListener('click', (e) => {
-      if (e.target === settingsModal) {
-        closeSettings();
+  // Clean button
+  document.getElementById('clean-btn')?.addEventListener('click', () => {
+    cleanWorkspace();
+  });
+
+  // Load models into dropdown
+  await loadModels();
+}
+
+async function loadModels(): Promise<void> {
+  const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
+  if (!modelSelect) return;
+
+  try {
+    const result = await window.electronAPI.listModels();
+    
+    if (result.ok && result.models && result.models.length > 0) {
+      modelSelect.innerHTML = '';
+      for (const model of result.models) {
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.textContent = model.name;
+        if (model.id === currentSettings.model) {
+          option.selected = true;
+        }
+        modelSelect.appendChild(option);
       }
-    });
+    } else {
+      // Show unavailable state
+      modelSelect.innerHTML = '<option value="">Models unavailable</option>';
+    }
+  } catch (error) {
+    console.error('Failed to load models:', error);
+    modelSelect.innerHTML = '<option value="">Failed to load models</option>';
   }
 
-  // Apply saved theme on load
-  const settings = loadSettings();
-  applyTheme(settings.theme);
-  applyFontSize(settings.fontSize);
+  // Update settings when model changes
+  modelSelect.addEventListener('change', () => {
+    currentSettings.model = modelSelect.value;
+    saveSettings(currentSettings);
+  });
+}
 
-  // Theme toggle
-  const themeToggle = document.getElementById('theme-toggle') as HTMLSelectElement;
-  if (themeToggle) {
-    themeToggle.value = settings.theme;
-    themeToggle.addEventListener('change', () => {
-      const theme = themeToggle.value as 'light' | 'dark';
-      const current = loadSettings();
-      current.theme = theme;
-      saveSettings(current);
-      applyTheme(theme);
-      updateTerminalTheme();
-      updateOutputTheme();
-    });
-  }
+function openSettingsModal(): void {
+  const modal = document.getElementById('settings-modal');
+  if (!modal) return;
 
-  // Font size
+  // Populate current settings
+  const themeSelect = document.getElementById('theme-select') as HTMLSelectElement;
   const fontSizeInput = document.getElementById('font-size-input') as HTMLInputElement;
-  if (fontSizeInput) {
-    fontSizeInput.value = String(settings.fontSize);
-    fontSizeInput.addEventListener('change', () => {
-      const size = parseInt(fontSizeInput.value, 10) || 14;
-      const current = loadSettings();
-      current.fontSize = size;
-      saveSettings(current);
-      applyFontSize(size);
-    });
-  }
+  const temperatureInput = document.getElementById('temperature-input') as HTMLInputElement;
 
-  // Temperature
-  const tempSlider = document.getElementById('temperature-slider') as HTMLInputElement;
-  const tempValue = document.getElementById('temperature-value') as HTMLElement;
-  if (tempSlider) {
-    tempSlider.value = String(settings.temperature);
-    if (tempValue) tempValue.textContent = String(settings.temperature);
-    tempSlider.addEventListener('input', () => {
-      const temp = parseFloat(tempSlider.value);
-      if (tempValue) tempValue.textContent = String(temp);
-      const current = loadSettings();
-      current.temperature = temp;
-      saveSettings(current);
-    });
-  }
+  if (themeSelect) themeSelect.value = currentSettings.theme;
+  if (fontSizeInput) fontSizeInput.value = String(currentSettings.fontSize);
+  if (temperatureInput) temperatureInput.value = String(currentSettings.temperature);
 
-  // Export
-  const exportBtn = document.getElementById('export-btn');
-  if (exportBtn) {
-    exportBtn.addEventListener('click', exportState);
-  }
+  // Show modal
+  modal.classList.add('visible');
 
-  // Import
-  const importBtn = document.getElementById('import-btn');
-  if (importBtn) {
-    importBtn.addEventListener('click', importState);
-  }
+  // Set up event handlers
+  const closeBtn = modal.querySelector('.close-btn');
+  closeBtn?.addEventListener('click', () => closeSettingsModal());
 
-  // History drawer
-  initHistoryDrawer();
+  // Close on Esc
+  const handleEsc = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      closeSettingsModal();
+      document.removeEventListener('keydown', handleEsc);
+    }
+  };
+  document.addEventListener('keydown', handleEsc);
+
+  // Theme change
+  themeSelect?.addEventListener('change', () => {
+    currentSettings.theme = themeSelect.value as 'light' | 'dark';
+    saveSettings(currentSettings);
+    applyTheme(currentSettings.theme);
+  });
+
+  // Font size change
+  fontSizeInput?.addEventListener('change', () => {
+    currentSettings.fontSize = parseInt(fontSizeInput.value, 10) || 14;
+    saveSettings(currentSettings);
+    applyFontSize(currentSettings.fontSize);
+  });
+
+  // Temperature change
+  temperatureInput?.addEventListener('change', () => {
+    currentSettings.temperature = parseFloat(temperatureInput.value) || 0;
+    saveSettings(currentSettings);
+  });
+
+  // Export button
+  document.getElementById('export-btn')?.addEventListener('click', () => {
+    exportState();
+  });
+
+  // Import button
+  document.getElementById('import-btn')?.addEventListener('click', () => {
+    importState();
+  });
+
+  // History button
+  document.getElementById('history-btn')?.addEventListener('click', () => {
+    openHistoryDrawer();
+  });
 }
 
-function openSettings(): void {
-  if (settingsModal) settingsModal.classList.add('open');
-}
-
-function closeSettings(): void {
-  if (settingsModal) settingsModal.classList.remove('open');
+function closeSettingsModal(): void {
+  const modal = document.getElementById('settings-modal');
+  modal?.classList.remove('visible');
 }
 
 function applyTheme(theme: 'light' | 'dark'): void {
-  document.documentElement.dataset.theme = theme;
+  document.documentElement.setAttribute('data-theme', theme);
+  updateTerminalTheme();
+  updateOutputTheme();
 }
 
 function applyFontSize(size: number): void {
   const editor = document.getElementById('editor-textarea') as HTMLTextAreaElement;
-  if (editor) editor.style.fontSize = size + 'px';
+  if (editor) {
+    editor.style.fontSize = `${size}px`;
+  }
 }
 
-export async function populateModels(): Promise<void> {
-  const select = document.getElementById('model-select') as HTMLSelectElement;
-  if (!select) return;
-
-  select.innerHTML = '<option value="">Loading models...</option>';
-  select.disabled = true;
-
-  const result = await window.electronAPI.listModels();
-
-  select.innerHTML = '';
-  select.disabled = false;
-
-  if (!result.ok || result.models.length === 0) {
-    select.innerHTML = '<option value="">Models unavailable</option>';
+async function cleanWorkspace(): Promise<void> {
+  // Preview what would be deleted
+  const result = await window.electronAPI.cleanWorkspace({ dryRun: true });
+  
+  if (!result.ok) {
+    alert(result.error || 'Failed to clean workspace');
     return;
   }
 
-  const settings = loadSettings();
-  for (const model of result.models) {
-    const option = document.createElement('option');
-    option.value = model.id;
-    option.textContent = model.name;
-    if (model.id === settings.model) option.selected = true;
-    select.appendChild(option);
+  if (result.deleted.length === 0) {
+    alert('No files to clean');
+    return;
   }
 
-  // If none was selected, select first
-  if (!select.value && result.models.length > 0) {
-    select.value = result.models[0].id;
-  }
+  // Show confirmation dialog
+  const message = `The following files will be deleted:\n\n${result.deleted.join('\n')}\n\nProceed?`;
+  if (!confirm(message)) return;
 
-  select.addEventListener('change', () => {
-    const current = loadSettings();
-    current.model = select.value;
-    saveSettings(current);
-  });
-}
-
-function initHistoryDrawer(): void {
-  const drawer = document.getElementById('history-drawer') as HTMLElement;
-  if (!drawer) return;
-
-  const entries = loadHistory();
-  const list = drawer.querySelector('.history-list') as HTMLElement;
-  if (!list) return;
-
-  list.innerHTML = '';
-  for (const entry of entries) {
-    const item = document.createElement('div');
-    item.className = 'history-item';
-    const date = new Date(entry.timestamp);
-    item.innerHTML = `
-      <span class="history-time">${date.toLocaleString()}</span>
-      <span class="history-model">${entry.model}</span>
-      <span class="history-status ${entry.status}">${entry.status}</span>
-    `;
-    list.appendChild(item);
+  // Perform actual clean
+  const cleanResult = await window.electronAPI.cleanWorkspace({ dryRun: false });
+  
+  if (cleanResult.ok) {
+    alert(`Deleted ${cleanResult.deleted.length} items`);
+    // Refresh file tree
+    const event = new CustomEvent('files-changed');
+    document.dispatchEvent(event);
+  } else {
+    alert(cleanResult.error || 'Failed to clean workspace');
   }
 }
 
-async function exportState(): Promise<void> {
-  const settings = loadSettings();
-  const history = loadHistory();
-  const bundle = { settings, history, version: 1 };
-  const json = JSON.stringify(bundle, null, 2);
-  await window.electronAPI.saveFileDialog('blueprint-state.json', json);
+function exportState(): void {
+  const json = exportProjectState();
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'blueprint-state.json';
+  a.click();
+  
+  URL.revokeObjectURL(url);
 }
 
 async function importState(): Promise<void> {
-  // Use a file input
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.json';
+  
   input.onchange = async () => {
     const file = input.files?.[0];
     if (!file) return;
-    const text = await file.text();
+    
     try {
-      const bundle = JSON.parse(text);
-      if (bundle.settings) {
-        saveSettings(bundle.settings);
-      }
-      location.reload();
-    } catch {
-      alert('Invalid state file.');
+      const json = await file.text();
+      importProjectState(json);
+      alert('State imported successfully');
+      // Reload settings
+      currentSettings = loadSettings();
+      applyTheme(currentSettings.theme);
+      applyFontSize(currentSettings.fontSize);
+    } catch (error) {
+      alert(`Failed to import: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
+  
   input.click();
+}
+
+function openHistoryDrawer(): void {
+  const history = loadHistory();
+  
+  if (history.length === 0) {
+    alert('No history');
+    return;
+  }
+
+  const drawer = document.getElementById('history-drawer');
+  const list = document.getElementById('history-list');
+  if (!drawer || !list) return;
+
+  list.innerHTML = '';
+  
+  for (const entry of history.slice().reverse()) {
+    const item = document.createElement('div');
+    item.className = 'history-item';
+    
+    const date = new Date(entry.timestamp);
+    const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+    
+    item.innerHTML = `
+      <div class="history-date">${dateStr}</div>
+      <div class="history-folder">${entry.workspaceFolder.split('/').pop()}</div>
+      <div class="history-status ${entry.success ? 'success' : 'error'}">${entry.success ? '✓' : '✗'}</div>
+    `;
+    
+    list.appendChild(item);
+  }
+
+  drawer.classList.add('visible');
+
+  // Close button
+  drawer.querySelector('.close-btn')?.addEventListener('click', () => {
+    drawer.classList.remove('visible');
+  });
+}
+
+export function getSettings(): Settings {
+  return currentSettings;
 }

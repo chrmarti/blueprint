@@ -1,212 +1,110 @@
 #!/usr/bin/env node
-// implement-cli.ts — Standalone CLI implement tool (no Electron)
+// CLI implement tool - headless blueprint implementation
 
-import * as path from 'path';
 import * as fs from 'fs';
-import { execFileSync } from 'child_process';
-import { initAgent, implementWithAgent, stopAgent, listModels } from './copilot-agent';
-import { cleanWorkspace } from './clean';
+import * as path from 'path';
+import { execSync, execFileSync } from 'child_process';
+import { fileURLToPath } from 'url';
+import { initAgent, implementWithAgent, stopAgent, ImplementEvent } from './copilot-agent.js';
+import { cleanWorkspace, previewClean } from './clean.js';
 
-const ACTIVITY_TIMEOUT = 120_000; // 120 seconds
-const MAX_RETRIES = 3;
-const RETRY_DELAY = 10_000; // 10 seconds
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
+// Resolve app root (where node_modules and scripts are)
 function resolveAppRoot(): string {
-  const scriptDir = path.resolve(path.dirname(new URL(import.meta.url).pathname));
-  // Global install: node_modules/@github/copilot is inside the package dir (sibling of index.mjs)
-  if (fs.existsSync(path.join(scriptDir, 'node_modules', '@github', 'copilot'))) {
-    return scriptDir;
+  // When installed as npm package, structure is:
+  // cli/index.mjs (this file)
+  // cli/scripts/safehouse
+  // node_modules/@github/copilot-*/copilot
+  
+  // First check if we're in the CLI package directory
+  const cliRoot = path.resolve(__dirname);
+  if (fs.existsSync(path.join(cliRoot, 'scripts', 'safehouse'))) {
+    return cliRoot;
   }
-  // Local dev: cli/index.mjs — node_modules is in the parent (project root)
-  return path.resolve(scriptDir, '..');
+
+  // Check parent directory (development mode)
+  const parentRoot = path.resolve(__dirname, '..');
+  if (fs.existsSync(path.join(parentRoot, 'scripts', 'safehouse'))) {
+    return parentRoot;
+  }
+
+  // Fallback to current directory
+  return process.cwd();
 }
 
+// Resolve GitHub token
 function resolveGitHubToken(): string | null {
-  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
+  if (process.env.GITHUB_TOKEN) {
+    return process.env.GITHUB_TOKEN;
+  }
+
   try {
-    const token = execFileSync('gh', ['auth', 'token'], { encoding: 'utf-8' }).trim();
-    if (token) return token;
+    const stdout = execFileSync('gh', ['auth', 'token'], { encoding: 'utf-8' });
+    return stdout.trim();
   } catch {
-    // gh CLI not available or not logged in
-  }
-  return null;
-}
-
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-
-  if (args.length === 0) {
-    printUsage();
-    process.exit(1);
-  }
-
-  const command = args[0];
-
-  switch (command) {
-    case 'implement':
-      await handleImplement(args.slice(1));
-      break;
-    case 'clean':
-      await handleClean(args.slice(1));
-      break;
-    case 'models':
-      await handleModels();
-      break;
-    default:
-      console.error(`Unknown command: ${command}`);
-      printUsage();
-      process.exit(1);
+    return null;
   }
 }
 
-function printUsage(): void {
-  console.log(`Usage:
-  blueprint implement <folder> [--model <model>] [--no-sandbox]
-  blueprint clean <folder> [--dry-run]
-  blueprint models`);
-}
-
-async function handleImplement(args: string[]): Promise<void> {
-  if (args.length === 0) {
-    console.error('Error: workspace folder required');
+// List available models
+async function listModelsCommand(): Promise<void> {
+  const token = resolveGitHubToken();
+  if (!token) {
+    console.error('Error: No GitHub token found. Set GITHUB_TOKEN or run `gh auth login`.');
     process.exit(1);
   }
 
-  const folder = path.resolve(args[0]);
-  let model = 'claude-opus-4.5';
-  let noSandbox = false;
-
-  for (let i = 1; i < args.length; i++) {
-    if (args[i] === '--model' && args[i + 1]) {
-      model = args[++i];
-    } else if (args[i] === '--no-sandbox') {
-      noSandbox = true;
-    }
-  }
-
-  if (!fs.existsSync(folder)) {
-    console.error(`Error: folder not found: ${folder}`);
-    process.exit(1);
-  }
-
-  const blueprintPath = path.join(folder, 'blueprint.md');
-  if (!fs.existsSync(blueprintPath)) {
-    console.error(`Error: blueprint.md not found in ${folder}`);
-    process.exit(1);
-  }
-
-  const githubToken = resolveGitHubToken();
-  if (!githubToken) {
-    console.error('Error: No GitHub token. Set GITHUB_TOKEN or run `gh auth login`.');
-    process.exit(1);
-  }
-
-  const markdown = fs.readFileSync(blueprintPath, 'utf-8');
   const appRoot = resolveAppRoot();
-
-  // Prefix user prompt with implementation directive
-  const userPrompt = `Implement the following blueprint now. Do not ask for confirmation — start immediately.\n\n${markdown}`;
-
-  let attempts = 0;
-  let lastError = '';
-
-  while (attempts < MAX_RETRIES) {
-    attempts++;
-    if (attempts > 1) {
-      console.log(`\n[implement] ♻️  Retry ${attempts}/${MAX_RETRIES} (waiting ${RETRY_DELAY / 1000}s)...`);
-      await sleep(RETRY_DELAY);
+  
+  try {
+    const { CopilotClient } = await import('@github/copilot-sdk');
+    
+    // Find CLI path
+    const platform = process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'win32' : 'linux';
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+    const binaryName = process.platform === 'win32' ? 'copilot.exe' : 'copilot';
+    
+    let cliPath = path.join(appRoot, 'node_modules', '@github', `copilot-${platform}-${arch}`, binaryName);
+    if (!fs.existsSync(cliPath)) {
+      cliPath = path.join(appRoot, 'node_modules', '@github', 'copilot', 'npm-loader.js');
     }
 
-    try {
-      initAgent({ githubToken, appRoot, noSandbox });
+    const client = new CopilotClient({
+      cwd: process.cwd(),
+      cliPath,
+      githubToken: token,
+      autoRestart: false,
+      logLevel: 'error',
+    });
 
-      let lastActivity = Date.now();
-      let timedOut = false;
-      const activityCheck = setInterval(() => {
-        if (Date.now() - lastActivity > ACTIVITY_TIMEOUT) {
-          timedOut = true;
-          console.log('\n[implement] ⏱️  Activity timeout — no events for 120s');
-          clearInterval(activityCheck);
-        }
-      }, 5000);
-
-      const result = await implementWithAgent({
-        model,
-        markdown: userPrompt,
-        workspaceFolder: folder,
-        onEvent: (event) => {
-          lastActivity = Date.now();
-
-          switch (event.type) {
-            case 'chunk':
-              process.stdout.write(String(event.data.content || ''));
-              break;
-            case 'tool_start':
-              console.log(`\n[implement] 🔧 ${event.data.toolName}`);
-              break;
-            case 'tool_complete':
-              console.log(`[implement] ✓ ${event.data.toolName} complete`);
-              break;
-            case 'usage': {
-              const inT = event.data.inputTokens;
-              const outT = event.data.outputTokens;
-              const dur = ((event.data.duration as number) / 1000).toFixed(1);
-              console.log(`[implement] tokens: ${inT} in / ${outT} out (${dur}s)`);
-              break;
-            }
-            case 'error':
-              console.error(`\n[implement] ✗ ${event.data.message}`);
-              break;
-            case 'done':
-              console.log('\n[implement] ✅ Implementation complete');
-              break;
-            case 'log':
-              console.log(`[implement] ${event.data.message}`);
-              break;
-          }
-        },
-      });
-
-      clearInterval(activityCheck);
-
-      if (timedOut) {
-        lastError = 'Activity timeout';
-        stopAgent();
-        continue; // retry
-      }
-
-      stopAgent();
-
-      if (result.ok) {
-        process.exit(0);
-      } else {
-        // Non-timeout errors fail immediately
-        console.error(`\n[implement] Failed: ${result.error}`);
-        process.exit(1);
-      }
-    } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err);
-      console.error(`\n[implement] Error: ${lastError}`);
-      stopAgent();
-      // Non-timeout errors fail immediately
-      process.exit(1);
+    const models = await client.listModels();
+    
+    console.log('Available models:');
+    for (const model of models) {
+      console.log(`  ${model.id}${model.name ? ` (${model.name})` : ''}`);
     }
+
+    await client.stop?.();
+  } catch (error) {
+    console.error('Error listing models:', error instanceof Error ? error.message : error);
+    process.exit(1);
   }
-
-  console.error(`\n[implement] Failed after ${MAX_RETRIES} retries. Last error: ${lastError}`);
-  process.exit(1);
 }
 
-async function handleClean(args: string[]): Promise<void> {
-  if (args.length === 0) {
-    console.error('Error: workspace folder required');
+// Clean command
+async function cleanCommand(folder: string, dryRun: boolean): Promise<void> {
+  const workspaceFolder = path.resolve(folder);
+  
+  if (!fs.existsSync(workspaceFolder)) {
+    console.error(`Error: Folder not found: ${workspaceFolder}`);
     process.exit(1);
   }
 
-  const folder = path.resolve(args[0]);
-  const dryRun = args.includes('--dry-run');
-
-  const result = await cleanWorkspace(folder, { dryRun });
+  const result = dryRun 
+    ? await previewClean(workspaceFolder)
+    : await cleanWorkspace(workspaceFolder);
 
   if (!result.ok) {
     console.error(`Error: ${result.error}`);
@@ -214,46 +112,243 @@ async function handleClean(args: string[]): Promise<void> {
   }
 
   if (result.deleted.length === 0) {
-    console.log('Nothing to clean.');
-  } else if (dryRun) {
+    console.log('No files to clean.');
+    return;
+  }
+
+  if (dryRun) {
     console.log('Would delete:');
-    for (const entry of result.deleted) {
-      console.log(`  ${entry}`);
-    }
   } else {
     console.log('Deleted:');
-    for (const entry of result.deleted) {
-      console.log(`  ${entry}`);
-    }
+  }
+  
+  for (const file of result.deleted) {
+    console.log(`  ${file}`);
   }
 }
 
-async function handleModels(): Promise<void> {
-  const githubToken = resolveGitHubToken();
-  if (!githubToken) {
-    console.error('Error: No GitHub token. Set GITHUB_TOKEN or run `gh auth login`.');
+// Implement command
+async function implementCommand(folder: string, model: string, noSandbox: boolean): Promise<void> {
+  const workspaceFolder = path.resolve(folder);
+  
+  if (!fs.existsSync(workspaceFolder)) {
+    console.error(`Error: Folder not found: ${workspaceFolder}`);
+    process.exit(1);
+  }
+
+  const blueprintPath = path.join(workspaceFolder, 'blueprint.md');
+  if (!fs.existsSync(blueprintPath)) {
+    console.error(`Error: No blueprint.md found in ${workspaceFolder}`);
+    process.exit(1);
+  }
+
+  const token = resolveGitHubToken();
+  if (!token) {
+    console.error('Error: No GitHub token found. Set GITHUB_TOKEN or run `gh auth login`.');
     process.exit(1);
   }
 
   const appRoot = resolveAppRoot();
+  const blueprintContent = fs.readFileSync(blueprintPath, 'utf-8');
 
-  const result = await listModels(githubToken, appRoot);
-  if (!result.ok) {
-    console.error(`Error: ${result.error}`);
+  console.log(`[implement] Starting implementation in ${workspaceFolder}`);
+  console.log(`[implement] Model: ${model}`);
+
+  let retries = 0;
+  const maxRetries = 3;
+  let lastError = '';
+
+  while (retries <= maxRetries) {
+    if (retries > 0) {
+      console.log(`[implement] Retrying (${retries}/${maxRetries})...`);
+      await new Promise(r => setTimeout(r, 10000));
+    }
+
+    try {
+      await initAgent({
+        githubToken: token,
+        appRoot,
+        noSandbox,
+      });
+
+      let lastEventTime = Date.now();
+      const activityTimeout = 120000; // 2 minutes
+
+      const onEvent = (event: ImplementEvent) => {
+        lastEventTime = Date.now();
+
+        switch (event.type) {
+          case 'session_start':
+            console.log(`[implement] 🚀 Session started (model: ${event.data?.model})`);
+            break;
+          case 'tool_start': {
+            const toolName = event.data?.toolName as string;
+            const args = event.data?.arguments as Record<string, unknown>;
+            let summary = '';
+            if (args) {
+              if (['create', 'edit', 'write_file', 'create_file'].includes(toolName)) {
+                summary = args.path as string || args.file_path as string || '';
+              } else if (['bash', 'shell'].includes(toolName)) {
+                const cmd = args.command as string || '';
+                summary = cmd.length > 60 ? cmd.substring(0, 60) + '...' : cmd;
+              }
+            }
+            console.log(`[implement] 🔧 ${toolName} ${summary}`);
+            break;
+          }
+          case 'tool_complete':
+            console.log(`[implement] ✓ ${event.data?.toolName} complete`);
+            break;
+          case 'usage': {
+            const u = event.data as { inputTokens: number; outputTokens: number; duration: number };
+            const dur = (u.duration / 1000).toFixed(1);
+            console.log(`[implement] tokens: ${u.inputTokens} in / ${u.outputTokens} out (${dur}s)`);
+            break;
+          }
+          case 'error':
+            console.error(`[implement] ✗ ${event.data?.message}`);
+            break;
+          case 'done':
+            console.log(`[implement] ✓ Implementation complete`);
+            break;
+        }
+      };
+
+      // Check for activity timeout
+      const checkTimeout = setInterval(() => {
+        if (Date.now() - lastEventTime > activityTimeout) {
+          console.error('[implement] Activity timeout - no events for 2 minutes');
+          clearInterval(checkTimeout);
+        }
+      }, 10000);
+
+      const result = await implementWithAgent({
+        model,
+        markdown: blueprintContent,
+        workspaceFolder,
+        onEvent,
+      });
+
+      clearInterval(checkTimeout);
+
+      if (result.ok) {
+        await stopAgent();
+        process.exit(0);
+      } else {
+        lastError = result.error || 'Unknown error';
+        
+        // Check if it's a timeout error (retry)
+        if (lastError.includes('timeout') || lastError.includes('Timeout')) {
+          retries++;
+          continue;
+        }
+        
+        // Non-timeout error, fail immediately
+        console.error(`[implement] Error: ${lastError}`);
+        await stopAgent();
+        process.exit(1);
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      console.error(`[implement] Error: ${lastError}`);
+      
+      if (lastError.includes('timeout') || lastError.includes('Timeout')) {
+        retries++;
+        continue;
+      }
+      
+      await stopAgent();
+      process.exit(1);
+    }
+  }
+
+  console.error(`[implement] Failed after ${maxRetries} retries: ${lastError}`);
+  await stopAgent();
+  process.exit(1);
+}
+
+// Show usage
+function showUsage(): void {
+  console.log(`
+Usage: blueprint <command> [options]
+
+Commands:
+  implement <folder>              Implement a blueprint into code
+  clean <folder>                  Remove generated files (keeps .blueprintfiles and .git)
+  models                          List available models
+
+Options:
+  --model <model>                 Model to use (default: claude-opus-4.5)
+  --no-sandbox                    Run without safehouse sandbox
+  --dry-run                       Preview changes without executing (clean only)
+
+Examples:
+  blueprint implement ./my-project
+  blueprint implement ./my-project --model claude-sonnet-4
+  blueprint clean ./my-project --dry-run
+  blueprint models
+`);
+}
+
+// Main entry point
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  
+  if (args.length === 0) {
+    showUsage();
     process.exit(1);
   }
 
-  console.log('Available models:');
-  for (const model of result.models) {
-    console.log(`  ${model.id} — ${model.name}`);
+  const command = args[0];
+
+  switch (command) {
+    case 'implement': {
+      const folder = args[1];
+      if (!folder) {
+        console.error('Error: Missing folder argument');
+        showUsage();
+        process.exit(1);
+      }
+      
+      const modelIdx = args.indexOf('--model');
+      const model = modelIdx !== -1 && args[modelIdx + 1] ? args[modelIdx + 1] : 'claude-opus-4.5';
+      const noSandbox = args.includes('--no-sandbox');
+      
+      await implementCommand(folder, model, noSandbox);
+      break;
+    }
+
+    case 'clean': {
+      const folder = args[1];
+      if (!folder) {
+        console.error('Error: Missing folder argument');
+        showUsage();
+        process.exit(1);
+      }
+      
+      const dryRun = args.includes('--dry-run');
+      await cleanCommand(folder, dryRun);
+      break;
+    }
+
+    case 'models':
+      await listModelsCommand();
+      break;
+
+    case 'help':
+    case '--help':
+    case '-h':
+      showUsage();
+      break;
+
+    default:
+      console.error(`Unknown command: ${command}`);
+      showUsage();
+      process.exit(1);
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-main().catch((err) => {
-  console.error(err);
+main().catch((error) => {
+  console.error('Fatal error:', error);
   process.exit(1);
 });

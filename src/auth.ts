@@ -1,61 +1,42 @@
-// auth.ts — GitHub token resolution and user info
+// Auth module - GitHub authentication and user display
 
-import { execFile } from 'child_process';
+let currentUser: { login: string; avatar_url: string } | null = null;
 
-export function resolveGitHubToken(): Promise<string | null> {
-  if (process.env.GITHUB_TOKEN) {
-    return Promise.resolve(process.env.GITHUB_TOKEN);
+export async function initAuth(): Promise<void> {
+  try {
+    currentUser = await window.electronAPI.getUser();
+    updateUserDisplay();
+  } catch (error) {
+    console.error('Failed to initialize auth:', error);
+    currentUser = null;
+    updateUserDisplay();
   }
-
-  return new Promise((resolve) => {
-    execFile('gh', ['auth', 'token'], (err, stdout) => {
-      if (err || !stdout.trim()) {
-        resolve(null);
-      } else {
-        resolve(stdout.trim());
-      }
-    });
-  });
 }
 
-export interface GitHubUser {
-  login: string;
-  avatar_url: string;
+export function getCurrentUser(): { login: string; avatar_url: string } | null {
+  return currentUser;
 }
 
-export async function fetchGitHubUser(token: string): Promise<GitHubUser | null> {
-  const { default: https } = await import('https');
+export function isAuthenticated(): boolean {
+  return currentUser !== null;
+}
 
-  return new Promise((resolve) => {
-    const req = https.request(
-      'https://api.github.com/user',
-      {
-        headers: {
-          Authorization: `token ${token}`,
-          'User-Agent': 'blueprint-implementer',
-          Accept: 'application/json',
-        },
-      },
-      (res) => {
-        let body = '';
-        res.on('data', (chunk: Buffer) => {
-          body += chunk.toString();
-        });
-        res.on('end', () => {
-          try {
-            const user = JSON.parse(body);
-            if (user.login) {
-              resolve({ login: user.login, avatar_url: user.avatar_url });
-            } else {
-              resolve(null);
-            }
-          } catch {
-            resolve(null);
-          }
-        });
-      }
-    );
-    req.on('error', () => resolve(null));
-    req.end();
-  });
+function updateUserDisplay(): void {
+  const userDisplay = document.getElementById('user-display');
+  if (!userDisplay) return;
+
+  if (currentUser) {
+    userDisplay.innerHTML = `
+      <img src="${currentUser.avatar_url}" alt="${currentUser.login}" class="user-avatar" />
+      <span class="user-login">${currentUser.login}</span>
+    `;
+    userDisplay.classList.remove('not-signed-in');
+  } else {
+    userDisplay.innerHTML = `<span class="user-login">Not signed in</span>`;
+    userDisplay.classList.add('not-signed-in');
+  }
+}
+
+export async function refreshAuth(): Promise<void> {
+  await initAuth();
 }

@@ -1,105 +1,79 @@
-// main.ts — Renderer entry point, boots all modules
+// Main renderer entry point - boots all modules
 
-import { initLayout } from './layout';
-import { initEditor } from './editor';
-import { initPreview } from './preview';
-import { initFiles, setWorkspaceFolder, refreshFileTree } from './files';
-import { initTerminalPanel, respawnTerminal } from './terminal';
-import { initImplementer } from './implementer';
-import { initSettings, populateModels } from './settings';
+import { initAuth } from './auth.js';
+import { initFilesPanel, setOnFileSelect, openFolder, refreshFileTree } from './files.js';
+import { initEditorPanel, loadFile } from './editor.js';
+import { initPreviewPanel } from './preview.js';
+import { initTerminalPanel, spawnTerminal } from './terminal.js';
+import { initImplementerPanel } from './implementer.js';
+import { initChatPanel } from './chat.js';
+import { initSettingsPanel } from './settings.js';
+import { initLayout } from './layout.js';
 
-async function boot(): Promise<void> {
-  // Initialize UI modules
+async function main(): Promise<void> {
+  console.log('Blueprint Implementer starting...');
+
+  // Initialize layout first
   initLayout();
-  initEditor();
-  initPreview();
-  initFiles();
-  initImplementer();
-  initSettings();
 
-  // Initialize terminal
+  // Initialize all panels
+  initEditorPanel();
+  initPreviewPanel();
   initTerminalPanel();
+  initImplementerPanel();
+  initChatPanel();
 
-  // Check for workspace folder from command line
-  const folder = await window.electronAPI.getWorkspaceFolder();
-  if (folder) {
-    await setWorkspaceFolder(folder);
-    respawnTerminal();
-  }
+  // Set up file selection handler
+  setOnFileSelect(async (filePath) => {
+    await loadFile(filePath);
+  });
 
-  // Load user info and models
-  loadUserInfo();
-  populateModels();
+  // Initialize files panel (loads workspace folder)
+  await initFilesPanel();
 
-  // Open folder button
-  const openFolderBtn = document.getElementById('open-folder-btn');
-  if (openFolderBtn) {
-    openFolderBtn.addEventListener('click', async () => {
-      const selected = await window.electronAPI.openFolder();
-      if (selected) {
-        await setWorkspaceFolder(selected);
-        respawnTerminal();
-      }
-    });
-  }
+  // Initialize settings (loads models, theme)
+  await initSettingsPanel();
 
-  // Clean button
-  const cleanBtn = document.getElementById('clean-btn');
-  if (cleanBtn) {
-    cleanBtn.addEventListener('click', handleClean);
-  }
+  // Initialize authentication
+  await initAuth();
 
-  // Listen for folder changes (from menu)
-  window.addEventListener('folder-changed', (async (e: Event) => {
-    const folder = (e as CustomEvent<string>).detail;
-    await setWorkspaceFolder(folder);
-    respawnTerminal();
-  }) as EventListener);
+  // Set up Open Folder button
+  document.getElementById('open-folder-btn')?.addEventListener('click', async () => {
+    const folder = await window.electronAPI.openFolderDialog();
+    if (folder) {
+      await openFolder(folder);
+      // Respawn terminal with new cwd
+      await spawnTerminal();
+    }
+  });
+
+  // Set up tab switching for right panel (Chat/Output)
+  const chatTab = document.getElementById('chat-tab');
+  const outputTab = document.getElementById('output-tab');
+  const chatPanel = document.getElementById('chat-panel');
+  const outputPanel = document.getElementById('output-panel');
+
+  chatTab?.addEventListener('click', () => {
+    chatTab.classList.add('active');
+    outputTab?.classList.remove('active');
+    chatPanel?.classList.add('active');
+    outputPanel?.classList.remove('active');
+  });
+
+  outputTab?.addEventListener('click', () => {
+    outputTab.classList.add('active');
+    chatTab?.classList.remove('active');
+    outputPanel?.classList.add('active');
+    chatPanel?.classList.remove('active');
+  });
+
+  // Listen for custom file-changed events
+  document.addEventListener('files-changed', () => {
+    refreshFileTree();
+  });
+
+  console.log('Blueprint Implementer ready');
 }
 
-async function loadUserInfo(): Promise<void> {
-  const userInfo = document.getElementById('user-info') as HTMLElement;
-  if (!userInfo) return;
-
-  const user = await window.electronAPI.getUser();
-  if (user) {
-    userInfo.innerHTML = `<img src="${user.avatar_url}" alt="${user.login}" class="avatar"> <span>${user.login}</span>`;
-
-    // Init copilot with token (resolved by main process)
-    // The main process handles token resolution internally
-  } else {
-    userInfo.innerHTML = '<span class="text-muted">Not signed in</span>';
-  }
-}
-
-async function handleClean(): Promise<void> {
-  // First do a dry run to see what would be deleted
-  const dryResult = await window.electronAPI.cleanWorkspace({ dryRun: true });
-
-  if (!dryResult.ok) {
-    alert(dryResult.error || 'Clean failed. Make sure .blueprintfiles exists in the workspace root.');
-    return;
-  }
-
-  if (dryResult.deleted.length === 0) {
-    alert('Nothing to clean — all files are listed in .blueprintfiles.');
-    return;
-  }
-
-  const message = `The following ${dryResult.deleted.length} entries will be deleted:\n\n${dryResult.deleted.join('\n')}\n\nContinue?`;
-  if (!confirm(message)) return;
-
-  const result = await window.electronAPI.cleanWorkspace();
-  if (result.ok) {
-    await refreshFileTree();
-  } else {
-    alert(result.error || 'Clean failed.');
-  }
-}
-
-// Boot when DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', boot);
-} else {
-  boot();
-}
+// Start the app
+main().catch(console.error);

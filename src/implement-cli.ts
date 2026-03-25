@@ -11,6 +11,16 @@ const ACTIVITY_TIMEOUT = 120_000; // 120 seconds
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 10_000; // 10 seconds
 
+function resolveAppRoot(): string {
+  const scriptDir = path.resolve(path.dirname(new URL(import.meta.url).pathname));
+  // Global install: node_modules/@github/copilot is inside the package dir (sibling of index.mjs)
+  if (fs.existsSync(path.join(scriptDir, 'node_modules', '@github', 'copilot'))) {
+    return scriptDir;
+  }
+  // Local dev: cli/index.mjs — node_modules is in the parent (project root)
+  return path.resolve(scriptDir, '..');
+}
+
 function resolveGitHubToken(): string | null {
   if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
   try {
@@ -92,7 +102,7 @@ async function handleImplement(args: string[]): Promise<void> {
   }
 
   const markdown = fs.readFileSync(blueprintPath, 'utf-8');
-  const appRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  const appRoot = resolveAppRoot();
 
   // Prefix user prompt with implementation directive
   const userPrompt = `Implement the following blueprint now. Do not ask for confirmation — start immediately.\n\n${markdown}`;
@@ -225,7 +235,7 @@ async function handleModels(): Promise<void> {
     process.exit(1);
   }
 
-  const appRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  const appRoot = resolveAppRoot();
 
   const result = await listModels(githubToken, appRoot);
   if (!result.ok) {

@@ -54,7 +54,7 @@ await esbuild.build({
   sourcemap: true,
   external: ['node-pty'],
   banner: {
-    js: 'import { createRequire } from "module"; const require = createRequire(import.meta.url);',
+    js: 'import { createRequire as _createRequire } from "module"; const require = _createRequire(import.meta.url);',
   },
 });
 
@@ -69,7 +69,7 @@ await esbuild.build({
   sourcemap: true,
   external: ['node-pty'],
   banner: {
-    js: 'import { createRequire } from "module"; const require = createRequire(import.meta.url);',
+    js: 'import { createRequire as _createRequire } from "module"; const require = _createRequire(import.meta.url);',
   },
 });
 

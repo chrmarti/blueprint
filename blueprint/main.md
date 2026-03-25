@@ -61,7 +61,7 @@ The application is an Electron desktop app composed of three primary regions in 
 
 1. **Sidebar** (left) — A file browser with **Files** and **Git** tabs, plus toolbar actions for creating/deleting files and folders.
 2. **Editor Panel** (center) — A tabbed view with **Edit** (markdown textarea) and **Browser** (embedded iframe with address bar) tabs, with an integrated terminal panel at the bottom. Direct disk I/O with autosave.
-3. **Output Panel** (right) — Controls for invoking the Copilot SDK agent, with streaming terminal output (xterm.js), error display, and save-to-file.
+3. **Right Panel** — Tabbed view with **Chat** (conversational blueprint editing) and **Output** (agent implementation, streaming terminal output). See [chat.md](chat.md) and [output.md](output.md).
 
 ### Technology Stack
 
@@ -234,7 +234,7 @@ See [settings.md](settings.md) for details.
 
 ## Testing
 
-Automated end-to-end tests use Playwright's Electron support to launch the app and verify all basic functionality. Tests live in `/test` and are run with Node.js directly (no test framework needed). A GitHub token is required for tests that exercise implementation. Locally the GitHub CLI can be used to get a token, in CI the GITHUB_TOKEN env variable must be set.
+Automated end-to-end tests use Playwright's Electron support to launch the app and verify all basic functionality, plus CLI smoke tests that verify the standalone `blueprint` command works. Tests live in `/test` and are run with Node.js directly (no test framework needed). A GitHub token is required for tests that exercise implementation. Locally the GitHub CLI can be used to get a token, in CI the GITHUB_TOKEN env variable must be set.
 
 ```
 GITHUB_TOKEN=$(gh auth token) node test/interact.mjs
@@ -260,8 +260,9 @@ The test script verifies the following end-to-end scenarios:
 7. **Auth Gate** — When no GitHub token is present, clicking Implement shows "Not signed in" in the status bar without crashing.
 8. **Model Picker Populated** — After launch, the `#model-select` dropdown has more than one `<option>` and none of them say "unavailable" or "Loading". This confirms that `copilot:listModels` succeeded end-to-end (token resolution → SDK client start → `listModels()` → IPC → renderer).
 9. **Implementation Completes** — Click the Implement button, wait for `#implement-status` to have class `success` (timeout: 10 minutes), and take periodic screenshots while waiting. On success, verify that `index.html` appears in the file tree.
+10. **Chat Multi-Turn** — Switch to the Chat tab. Type "Create a file called counter.txt containing just the number 1" and send. Wait for the agent response to complete (input re-enabled). Then type "Increase the counter" (without mentioning the filename, to test that conversation history provides context) and send. Wait for the response. Read `test/tictactoe/counter.txt` via `electronAPI.readFile` and assert its trimmed content is "2".
 
-Tests 8–9 require a GitHub token. The test resolves one using the same logic as the app: `GITHUB_TOKEN` env var, falling back to `gh auth token`. If neither is available, the test fails. All tests are in `test/interact.mjs` and use the `test/tictactoe` workspace.
+Tests 8–10 require a GitHub token. The test resolves one using the same logic as the app: `GITHUB_TOKEN` env var, falling back to `gh auth token`. If neither is available, the test fails. All tests are in `test/interact.mjs` and use the `test/tictactoe` workspace.
 
 ### Test Implementation
 
@@ -326,9 +327,14 @@ blueprint implement <workspace-folder> [--model <model>] [--no-sandbox]
 
 #### CLI Verification
 
-```
-blueprint clean test/tictactoe
-blueprint implement test/tictactoe
-```
+The test script (`test/interact.mjs`) includes automated CLI smoke tests that run **before** the Playwright/Electron tests. These verify the packaged CLI works correctly after building, installed locally to a temp directory to avoid polluting the global `npm` path.
 
-After the agent finishes, `test/tictactoe/index.html` should exist and contain a playable game.
+**Setup**: Build the CLI, pack it with `npm pack` in `cli/`, then install the tarball into a temp directory using `npm install --prefix <tmpdir> ./cli/blueprint-1.0.0.tgz`. Run the `blueprint` binary from `<tmpdir>/node_modules/.bin/blueprint`. Clean up the temp directory after the tests.
+
+1. **Help text** — Run `blueprint` with no arguments. Assert it exits with a non-zero exit code and its combined stdout/stderr output contains the word "usage" (case-insensitive). This catches bundling errors (e.g., duplicate ESM imports, syntax errors) and dependency issues (e.g., missing Copilot CLI) that would prevent the CLI from working after install.
+
+2. **Clean** — Run `blueprint clean test/tictactoe`. Assert it exits successfully (exit code 0).
+
+3. **Implement** — Run `blueprint implement test/tictactoe`. Assert it exits successfully and `test/tictactoe/index.html` exists afterward.
+
+These CLI tests use `execFileSync` (or `execFile`) to invoke the locally installed `blueprint` binary — not `node cli/index.mjs`, and not a global install. No Playwright or Electron involved. They must be part of the same `test/interact.mjs` script so they run as part of the standard test suite.

@@ -5,18 +5,16 @@
 
 # Terminal
 
-An integrated terminal panel at the bottom of the Editor panel, providing an interactive shell session with its working directory set to the opened workspace folder.
+An integrated terminal panel at the bottom of the Editor panel, providing an interactive shell session with its working directory set to the workspace folder.
 
 ## Architecture
 
-The terminal uses `node-pty` in the Electron main process to spawn a real pseudo-terminal, and `@xterm/xterm` in the renderer to display it. Data flows bidirectionally via IPC:
+The terminal uses `node-pty` on the server to spawn a real pseudo-terminal, and `@xterm/xterm` in the browser to display it. Data flows bidirectionally via WebSocket:
 
-- **Main process** (`electron.ts`): Spawns a pty process using `node-pty`, relays output to the renderer via `terminal:data` events, and accepts input via `terminal:write` IPC.
-- **Renderer** (`terminal.ts`): Hosts an xterm.js `Terminal` instance, sends keystrokes to the main process, and renders pty output.
+- **Server** (`server.ts`): Spawns a pty process using `node-pty`, relays output to the browser via the `/ws/terminal` WebSocket, and accepts input via incoming WebSocket messages.
+- **Browser** (`terminal.ts`): Hosts an xterm.js `Terminal` instance, sends keystrokes to the server over WebSocket, and renders pty output.
 
-`node-pty` is a native module and must be rebuilt for Electron's Node.js version using `electron-rebuild`. It is marked as `external` in the esbuild config so it is loaded from `node_modules` at runtime.
-
-> **Known issue:** `node-pty` v1.1.0 ships its macOS `spawn-helper` prebuild without the execute bit, causing `posix_spawnp failed` errors (see [microsoft/node-pty#850](https://github.com/microsoft/node-pty/issues/850)). Add a `postinstall` script in `package.json` to work around this by running `chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper` on the prebuilt binary. This workaround can be removed once `node-pty` ≥1.2.0 stable is released with the fix.
+`node-pty` is a native module and is marked as `external` in the esbuild config so it is loaded from `node_modules` at runtime.
 
 ## UI
 
@@ -26,7 +24,7 @@ The terminal panel sits below the editor/browser area in the Editor panel, separ
 
 - Default height: 200px, minimum 60px.
 - A horizontal drag handle (`drag-handle-h`) between the editor area and terminal allows vertical resizing.
-- The terminal container fills the panel body and uses a `ResizeObserver` to auto-fit the xterm.js grid (cols/rows) to the available space. The fit function calculates cols/rows from the container dimensions and both resizes the xterm.js `Terminal` and calls `terminalResize(cols, rows)` to sync the pty. This fit function is also called immediately after `terminalSpawn()` returns, since the `ResizeObserver` only fires on size changes and won't trigger if the container is already at its final size when the pty spawns.
+- The terminal container fills the panel body and uses a `ResizeObserver` to auto-fit the xterm.js grid (cols/rows) to the available space. The fit function calculates cols/rows from the container dimensions and both resizes the xterm.js `Terminal` and sends a resize message over WebSocket to sync the pty. This fit function is also called immediately after the WebSocket connects and the pty spawns, since the `ResizeObserver` only fires on size changes and won't trigger if the container is already at its final size.
 
 ### Appearance
 
@@ -35,34 +33,39 @@ The terminal panel sits below the editor/browser area in the Editor panel, separ
 - Bar cursor with blinking enabled.
 - Updates theme dynamically when the user toggles light/dark mode.
 
-## IPC Handlers
+## WebSocket Protocol (`/ws/terminal`)
 
-- `terminal:spawn` — Spawns a new shell process (kills any existing one first). Uses the user's default shell (`$SHELL` on Unix, `powershell.exe` on Windows) with the workspace folder as cwd. Sets `TERM=xterm-256color` for full color support. The pty starts with default dimensions (80×24). The renderer must call `terminalResize()` immediately after spawn to sync the pty to the actual terminal container size. Sends `terminal:data` events to the renderer for output and `terminal:exit` when the process ends.
-- `terminal:write` — Writes data (user keystrokes) to the pty's stdin.
-- `terminal:resize` — Resizes the pty to match the renderer's cols/rows.
-- `terminal:kill` — Kills the current shell process.
+The server upgrades HTTP connections at `/ws/terminal` to a WebSocket. Messages are JSON-encoded:
+
+### Client → Server
+
+- `{ type: "spawn" }` — Spawns a new shell process (kills any existing one first). Uses the user's default shell (`$SHELL` on Linux) with the workspace folder as cwd. Sets `TERM=xterm-256color` for full color support. The pty starts with default dimensions (80×24). The client should send a `resize` message immediately after to sync the pty to the actual terminal container size.
+- `{ type: "write", data: "<input>" }` — Writes data (user keystrokes) to the pty's stdin.
+- `{ type: "resize", cols: N, rows: N }` — Resizes the pty to match the browser's cols/rows.
+- `{ type: "kill" }` — Kills the current shell process.
+
+### Server → Client
+
+- `{ type: "data", data: "<output>" }` — Pty output (terminal content).
+- `{ type: "exit" }` — The shell process exited.
 
 ## Lifecycle
 
-- The terminal spawns automatically when the app starts (after `initTerminalPanel()`).
-- When a new workspace folder is opened, the terminal is killed and respawned with the new folder as cwd.
+- The terminal spawns automatically when the page loads and the WebSocket connects.
+- The browser sends a `spawn` message on connection, followed by a `resize` to set the correct dimensions.
 - When the shell process exits, `[Process exited]` is shown in the terminal output.
 - Theme changes are applied immediately via `updateTerminalTheme()`.
 
 ### Verification
 
-Write a Playwright test to verify the terminal is functional after app launch: wait for the terminal panel's xterm.js instance to render, then confirm that the terminal contains visible text content (e.g., a shell prompt or directory name), not just a blinking cursor on an empty screen. The test must confirm the terminal is functional by typing and running the echo command with some longish text in it. Take a screenshot and confirm the screenshot shows the echo command ran.
+Write a Playwright test to verify the terminal is functional after the page loads: wait for the terminal panel's xterm.js instance to render, then confirm that the terminal contains visible text content (e.g., a shell prompt or directory name), not just a blinking cursor on an empty screen. The test must confirm the terminal is functional by typing and running the echo command with some longish text in it. Take a screenshot and confirm the screenshot shows the echo command ran.
 
-The test must also verify the terminal still works after opening a new folder (the respawn path): open a different folder via the Open Folder button, wait for the terminal to respawn, and confirm typing an echo command still produces output.
+## Client-Side API
 
-## Preload API
+The `api-client.ts` module exposes these methods on `serverAPI`:
 
-The preload script exposes these methods on `window.electronAPI`:
-
-- `terminalSpawn()` — Spawns the shell, returns `{ ok: boolean }`.
-- `terminalWrite(data)` — Sends input to the shell.
-- `terminalResize(cols, rows)` — Resizes the pty.
-- `terminalKill()` — Kills the shell.
-- `onTerminalData(callback)` — Listens for pty output.
-- `onTerminalExit(callback)` — Listens for process exit.
-- `removeTerminalDataListeners()` / `removeTerminalExitListeners()` — Cleanup.
+- `connectTerminal()` — Opens a WebSocket to `/ws/terminal`. Returns an object with:
+  - `send(message)` — Send a JSON message to the server.
+  - `onData(callback)` — Listen for pty output.
+  - `onExit(callback)` — Listen for process exit.
+  - `close()` — Close the WebSocket connection.

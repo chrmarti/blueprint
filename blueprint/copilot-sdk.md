@@ -52,7 +52,7 @@ session.send({ prompt });
 
 ```ts
 new CopilotClient({
-  cliPath,           // path to node_modules/.bin/copilot
+  cliPath,           // path to the copilot CLI binary
   cwd,               // working directory for the CLI process
   githubToken,       // GitHub PAT with Copilot access
   autoRestart: true, // auto-recover if CLI process crashes
@@ -117,7 +117,7 @@ Use the types exported by the SDK package (`SessionEvent`, `CopilotClient`, `Cop
 
 ## ESM-Only
 
-The SDK is ESM-only. In CJS contexts (like Electron main process), use dynamic `await import('@github/copilot-sdk')` and `import type` for compile-time types only.
+The SDK is ESM-only. The server bundle can use ESM natively. Use `import type` for compile-time types and direct `import` for runtime usage.
 
 ## Reference Implementations
 

@@ -13,7 +13,7 @@ Located behind the **Files** tab in the editor panel sidebar, the Git tab displa
 
 ### Data Source
 
-The renderer calls `electronAPI.gitStatus()` which invokes the `git:status` IPC handler in the Electron main process. The handler runs:
+The frontend calls `serverAPI.gitStatus()` which sends `GET /api/git/status` to the server. The server runs:
 
 ```
 git status --porcelain
@@ -21,10 +21,10 @@ git status --porcelain
 
 in the workspace folder directory via `child_process.execFile` and parses the output into `{ status, file }` entries. Each line of porcelain output has a two-character status code (index + working tree) in columns 0–1 and the file path starting at column 3.
 
-### IPC
+### REST API
 
-- **Handler**: `git:status` (in `electron.ts`)
-- **Preload**: `electronAPI.gitStatus()` → `ipcRenderer.invoke('git:status')`
+- **Endpoint**: `GET /api/git/status` (in `server.ts`)
+- **Client**: `serverAPI.gitStatus()` → `fetch('/api/git/status')`
 - **Return type**: `{ status: string; file: string }[]`
 
 Returns an empty array if the workspace folder is not set, not a git repository, or if `git` is not available.

@@ -20,3 +20,9 @@ The chat panel provides a conversational interface for iterating on the blueprin
 - The conversation context includes the current contents of `blueprint.md` so the agent can reason about the existing blueprint.
 - Each chat session maintains its own conversation history (list of user/assistant message pairs) for multi-turn context.
 - The file tree auto-refreshes when the agent signals `files_changed`.
+
+### WebSocket Communication
+
+- The chat uses the `/ws/chat` WebSocket channel for bidirectional communication.
+- The client sends user messages as JSON: `{ type: "message", content: "<text>" }`.
+- The server streams agent responses back as JSON messages: `{ type: "chunk", content: "<delta>" }` for streaming text, `{ type: "event", data: <event> }` for structured events (tool calls, files_changed), and `{ type: "done" }` when the response is complete.

@@ -7,7 +7,7 @@ The output panel orchestrates transformation of the authored markdown into runna
 - A **Implement** button that invokes the Copilot SDK agent on the workspace's `blueprint.md`.
 - The SDK prompt is constructed by combining:
   - The system prompt defined in [harness.md](harness.md).
-  - The contents of `blueprint.md` (appended to the system prompt at implement time by `electron.ts`).
+  - The contents of `blueprint.md` (appended to the system prompt at implement time by `server.ts`).
   - The contents of `blueprint.md` as the user message.
 - The output panel uses an xterm.js terminal to display agent output. The agent's streamed text (thinking, explanations) is written directly to the terminal as it arrives. Structured events are rendered inline between streamed text as human-readable formatted lines using ANSI colors:
   - **Tool start** (`🔧` yellow): shows the tool name in bold, followed by a short human-readable summary of what the tool is doing. For file-writing tools, show the file path. For shell/bash tools, show the command. For other tools, show the most relevant argument value. Do **not** dump all arguments as `key=value` pairs or render JSON.
@@ -19,15 +19,22 @@ The output panel orchestrates transformation of the authored markdown into runna
 - The file tree auto-refreshes when the agent signals `files_changed`.
 - An **errors** section that surfaces any SDK invocation failures or malformed output.
 - A **history** drawer listing previous implementations with timestamps, allowing rollback.
-- A **save** button (💾) to write implemented output to a file on disk via a native save dialog.
+- A **save** button (💾) to write implemented output to a file in the workspace and trigger a browser download.
 - Implementation output is stored in `localStorage` for session persistence.
+
+### WebSocket Communication
+
+Agent events are streamed from the server to the browser via the `/ws/copilot` WebSocket. Messages are JSON-encoded with a `type` field:
+
+- `{ type: "chunk", content: "<delta>" }` — Streaming text from the agent.
+- `{ type: "event", data: { type: "<event_type>", ... } }` — Structured agent events (tool_start, tool_complete, usage, error, files_changed, etc.).
+- `{ type: "done", ok: true/false, error?: "..." }` — Implementation complete.
 
 #### Verification
 
-Write a test using Playwright that starts the app on a folder with a Game of Life blueprint and triggers the Implement button. The test must observe that the Output panel starts streaming messages from the Copilot CLI/SDK.
+Write a test using Playwright that starts the server with a Game of Life blueprint workspace and triggers the Implement button. The test must observe that the Output panel starts streaming messages from the Copilot CLI/SDK.
 
 ### Copilot SDK Integration
 
-- Authentication via GitHub OAuth device flow (no API keys needed).
-- Users sign in with their GitHub account; the GitHub token is passed to the shared `copilot-agent` module which handles Copilot authentication internally.
-- Implementation uses the shared `copilot-agent.ts` module which wraps `@github/copilot-sdk`: it creates a `CopilotClient`, starts the Copilot CLI (`@github/copilot`), creates a streaming session with `environment: { cwd: workspaceFolder }`, and relays events to the renderer. The agent uses its built-in file tools to write output files directly to the workspace.
+- Authentication via server-side GitHub token (from `GITHUB_TOKEN` env var or `gh auth token`).
+- Implementation uses the shared `copilot-agent.ts` module which wraps `@github/copilot-sdk`: it creates a `CopilotClient`, starts the Copilot CLI (`@github/copilot`), creates a streaming session with `environment: { cwd: workspaceFolder }`, and relays events to the browser via WebSocket. The agent uses its built-in file tools to write output files directly to the workspace.

@@ -48,8 +48,8 @@ await esbuild.build({
 
 // Bundle CLI tool (ESM) with createRequire shim
 const createRequireShim = `
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+import { createRequire as __banner_createRequire } from 'module';
+const require = __banner_createRequire(import.meta.url);
 `;
 
 await esbuild.build({

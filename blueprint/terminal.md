@@ -9,10 +9,10 @@ An integrated terminal panel at the bottom of the Editor panel, providing an int
 
 ## Architecture
 
-The terminal uses `node-pty` on the server to spawn a real pseudo-terminal, and `@xterm/xterm` in the browser to display it. Data flows bidirectionally via WebSocket:
+The terminal uses `node-pty` on the server to spawn a real pseudo-terminal, and `@xterm/xterm` with `@xterm/addon-fit` in the browser to display it. Data flows bidirectionally via WebSocket:
 
 - **Server** (`server.ts`): Spawns a pty process using `node-pty`, relays output to the browser via the `/ws/terminal` WebSocket, and accepts input via incoming WebSocket messages.
-- **Browser** (`terminal.ts`): Hosts an xterm.js `Terminal` instance, sends keystrokes to the server over WebSocket, and renders pty output.
+- **Browser** (`terminal.ts`): Hosts an xterm.js `Terminal` instance with the `FitAddon` for automatic sizing, sends keystrokes to the server over WebSocket, and renders pty output.
 
 `node-pty` is a native module and is marked as `external` in the esbuild config so it is loaded from `node_modules` at runtime.
 
@@ -24,7 +24,7 @@ The terminal panel sits below the editor/browser area in the Editor panel, separ
 
 - Default height: 200px, minimum 60px.
 - A horizontal drag handle (`drag-handle-h`) between the editor area and terminal allows vertical resizing.
-- The terminal container fills the panel body and uses a `ResizeObserver` to auto-fit the xterm.js grid (cols/rows) to the available space. The fit function calculates cols/rows from the container dimensions and both resizes the xterm.js `Terminal` and sends a resize message over WebSocket to sync the pty. This fit function is also called immediately after the WebSocket connects and the pty spawns, since the `ResizeObserver` only fires on size changes and won't trigger if the container is already at its final size.
+- The terminal container fills the panel body and uses a `ResizeObserver` to auto-fit the xterm.js grid (cols/rows) to the available space via `@xterm/addon-fit`. The `FitAddon.fit()` method measures actual cell dimensions using xterm's internal render metrics, then resizes the terminal and sends a resize message over WebSocket to sync the pty. This fit is also called immediately after the WebSocket connects and the pty spawns, since the `ResizeObserver` only fires on size changes and won't trigger if the container is already at its final size.
 
 ### Appearance
 
@@ -52,20 +52,27 @@ The server upgrades HTTP connections at `/ws/terminal` to a WebSocket. Messages 
 ## Lifecycle
 
 - The terminal spawns automatically when the page loads and the WebSocket connects.
-- The browser sends a `spawn` message on connection, followed by a `resize` to set the correct dimensions.
+- The browser sends a `spawn` message once the WebSocket `open` event fires (via the `onOpen` callback), followed by a `resize` to set the correct dimensions. This avoids race conditions from arbitrary timeouts.
 - When the shell process exits, `[Process exited]` is shown in the terminal output.
 - Theme changes are applied immediately via `updateTerminalTheme()`.
 
 ### Verification
 
-Write a Playwright test to verify the terminal is functional after the page loads: wait for the terminal panel's xterm.js instance to render, then confirm that the terminal contains visible text content (e.g., a shell prompt or directory name), not just a blinking cursor on an empty screen. The test must confirm the terminal is functional by typing and running the echo command with some longish text in it. Take a screenshot and confirm the screenshot shows the echo command ran.
+Write a Playwright test to verify the terminal is functional after the page loads. The terminal exposes its xterm.js `Terminal` instance as `window._xtermTerminal` for test access. Tests should read terminal content through the xterm buffer API (`terminal.buffer.active.getLine(i).translateToString()`) rather than screenshots or DOM scraping.
+
+The test must:
+1. Wait for the shell prompt to appear by polling the xterm buffer for a non-empty line.
+2. Type and run an echo command with some longish text.
+3. Assert the echo output appears in the xterm buffer.
+4. Verify the terminal reports valid dimensions (`terminal.cols > 0`, `terminal.rows > 0`).
 
 ## Client-Side API
 
 The `api-client.ts` module exposes these methods on `serverAPI`:
 
 - `connectTerminal()` — Opens a WebSocket to `/ws/terminal`. Returns an object with:
-  - `send(message)` — Send a JSON message to the server.
+  - `send(message)` — Send a JSON message to the server (silently drops if not yet connected).
   - `onData(callback)` — Listen for pty output.
   - `onExit(callback)` — Listen for process exit.
+  - `onOpen(callback)` — Listen for WebSocket connection open (fires immediately if already open).
   - `close()` — Close the WebSocket connection.

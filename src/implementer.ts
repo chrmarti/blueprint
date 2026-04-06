@@ -7,9 +7,11 @@ import { showPreview } from './preview.js';
 import { addHistoryEntry } from './storage.js';
 import { getSelectedModel } from './settings.js';
 import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
 import { getTheme } from './layout.js';
 
 let outputTerminal: Terminal | null = null;
+let outputFitAddon: FitAddon | null = null;
 let copilotConnection: ReturnType<typeof serverAPI.connectCopilot> | null = null;
 let isImplementing = false;
 
@@ -27,6 +29,8 @@ export function initImplementer(): void {
   });
 
   outputTerminal.open(container);
+  outputFitAddon = new FitAddon();
+  outputTerminal.loadAddon(outputFitAddon);
 
   // Setup implement button
   const implementBtn = document.getElementById('implement-btn');
@@ -78,23 +82,8 @@ function getOutputTerminalTheme(theme: 'light' | 'dark'): { background: string; 
 }
 
 function fitOutputTerminal(): void {
-  if (!outputTerminal) return;
-  
-  const container = document.getElementById('output-terminal');
-  if (!container) return;
-
-  const dims = outputTerminal.element;
-  if (!dims) return;
-
-  const cellWidth = dims.querySelector('.xterm-char-measure-element')?.getBoundingClientRect().width || 9;
-  const cellHeight = 17;
-  
-  const cols = Math.floor(container.clientWidth / cellWidth);
-  const rows = Math.floor(container.clientHeight / cellHeight);
-
-  if (cols > 0 && rows > 0) {
-    outputTerminal.resize(cols, rows);
-  }
+  if (!outputTerminal || !outputFitAddon) return;
+  outputFitAddon.fit();
 }
 
 function setupOutputTabs(): void {

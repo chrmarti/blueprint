@@ -4,8 +4,10 @@
 import { serverAPI } from './api-client.js';
 import { getTheme } from './layout.js';
 import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
 
 let terminal: Terminal | null = null;
+let fitAddon: FitAddon | null = null;
 let terminalConnection: ReturnType<typeof serverAPI.connectTerminal> | null = null;
 
 export function initTerminal(): void {
@@ -21,6 +23,11 @@ export function initTerminal(): void {
   });
 
   terminal.open(container);
+  fitAddon = new FitAddon();
+  terminal.loadAddon(fitAddon);
+
+  // Expose for e2e test access
+  (window as unknown as Record<string, unknown>)._xtermTerminal = terminal;
 
   // Connect to WebSocket
   connectTerminal();
@@ -74,15 +81,13 @@ function connectTerminal(): void {
     }
   });
 
-  // Wait for connection to open before spawning
-  setTimeout(() => {
+  // Spawn shell once connection is open
+  terminalConnection.onOpen(() => {
     if (terminalConnection) {
-      // Spawn shell
       terminalConnection.send({ type: 'spawn' });
-      // Send initial resize
       fitTerminal();
     }
-  }, 100);
+  });
 
   // Forward user input
   if (terminal) {
@@ -95,26 +100,12 @@ function connectTerminal(): void {
 }
 
 function fitTerminal(): void {
-  if (!terminal) return;
-  
-  const container = document.getElementById('terminal-container');
-  if (!container) return;
+  if (!terminal || !fitAddon) return;
 
-  // Calculate available dimensions
-  const dims = terminal.element;
-  if (!dims) return;
+  fitAddon.fit();
 
-  const cellWidth = dims.querySelector('.xterm-char-measure-element')?.getBoundingClientRect().width || 9;
-  const cellHeight = 17; // Approximate line height
-  
-  const cols = Math.floor(container.clientWidth / cellWidth);
-  const rows = Math.floor(container.clientHeight / cellHeight);
-
-  if (cols > 0 && rows > 0) {
-    terminal.resize(cols, rows);
-    if (terminalConnection) {
-      terminalConnection.send({ type: 'resize', cols, rows });
-    }
+  if (terminalConnection) {
+    terminalConnection.send({ type: 'resize', cols: terminal.cols, rows: terminal.rows });
   }
 }
 
@@ -127,5 +118,6 @@ export function closeTerminal(): void {
   if (terminal) {
     terminal.dispose();
     terminal = null;
+    fitAddon = null;
   }
 }

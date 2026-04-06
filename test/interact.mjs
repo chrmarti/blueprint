@@ -253,20 +253,64 @@ async function runBrowserTests() {
       // Test 6: Terminal Echo
       console.log('\n[Browser Test 6] Terminal Echo...');
       await page.waitForSelector('#terminal-container .xterm', { timeout: 10000 });
-      // Wait for terminal to initialize
-      await page.waitForTimeout(2000);
-      
-      // Type echo command
+
+      // Helper: read all text from the xterm buffer
+      const readTerminalBuffer = () => page.evaluate(() => {
+        const term = window._xtermTerminal;
+        if (!term) return '';
+        const buf = term.buffer.active;
+        const lines = [];
+        for (let i = 0; i < buf.length; i++) {
+          const line = buf.getLine(i);
+          if (line) lines.push(line.translateToString(true));
+        }
+        return lines.join('\n');
+      });
+
+      // Wait for shell prompt (any non-empty content in terminal buffer)
+      await page.waitForFunction(() => {
+        const term = window._xtermTerminal;
+        if (!term) return false;
+        const buf = term.buffer.active;
+        for (let i = 0; i <= buf.cursorY; i++) {
+          const line = buf.getLine(i);
+          if (line && line.translateToString(true).trim().length > 0) return true;
+        }
+        return false;
+      }, { timeout: 10000 });
+      console.log('  ✅ PASS: Shell prompt appeared');
+
+      // Focus terminal and type echo command
+      await page.click('#terminal-container');
       const echoText = 'Hello from Blueprint Implementer test';
       await page.keyboard.type(`echo "${echoText}"`);
       await page.keyboard.press('Enter');
-      await page.waitForTimeout(1000);
-      
-      await page.screenshot({ path: `${SCREENSHOT_DIR}/06-terminal.png` });
-      
-      // Check terminal output by looking at the screenshot - actual verification would require
-      // parsing terminal content which is complex
-      console.log('  ✅ PASS: Terminal accepts input (check screenshot)');
+
+      // Wait for echo output to appear in the xterm buffer
+      await page.waitForFunction((expected) => {
+        const term = window._xtermTerminal;
+        if (!term) return false;
+        const buf = term.buffer.active;
+        // Start from line 1 to skip the command line itself — look for output
+        for (let i = 0; i < buf.length; i++) {
+          const line = buf.getLine(i);
+          if (line && line.translateToString(true).includes(expected)) return true;
+        }
+        return false;
+      }, echoText, { timeout: 5000 });
+      console.log('  ✅ PASS: Terminal echoes command output');
+
+      // Test 6b: Terminal reports valid dimensions
+      const termSize = await page.evaluate(() => {
+        const term = window._xtermTerminal;
+        if (!term) return null;
+        return { cols: term.cols, rows: term.rows };
+      });
+      if (termSize && termSize.cols > 0 && termSize.rows > 0) {
+        console.log(`  ✅ PASS: Terminal has valid size (${termSize.cols}x${termSize.rows})`);
+      } else {
+        throw new Error(`Terminal has invalid size: ${JSON.stringify(termSize)}`);
+      }
 
       // Test 7: Model Picker
       console.log('\n[Browser Test 7] Model Picker...');

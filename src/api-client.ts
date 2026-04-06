@@ -8,6 +8,7 @@ interface TerminalConnection {
   send(message: { type: string; data?: string; cols?: number; rows?: number }): void;
   onData(callback: (data: string) => void): void;
   onExit(callback: () => void): void;
+  onOpen(callback: () => void): void;
   close(): void;
 }
 
@@ -118,6 +119,11 @@ const serverAPI: ServerAPI = {
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/terminal`);
     const dataCallbacks: Array<(data: string) => void> = [];
     const exitCallbacks: Array<() => void> = [];
+    const openCallbacks: Array<() => void> = [];
+
+    ws.onopen = () => {
+      openCallbacks.forEach((cb) => cb());
+    };
 
     ws.onmessage = (event) => {
       try {
@@ -143,6 +149,13 @@ const serverAPI: ServerAPI = {
       },
       onExit(callback) {
         exitCallbacks.push(callback);
+      },
+      onOpen(callback) {
+        if (ws.readyState === WebSocket.OPEN) {
+          callback();
+        } else {
+          openCallbacks.push(callback);
+        }
       },
       close() {
         ws.close();

@@ -1,116 +1,108 @@
-// Preview module - browser tab with iframe and address bar
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See License.txt in the project root for license information.
 
-let previewFrame: HTMLIFrameElement | null = null;
+import { expandPreviewPanel } from './layout.js';
 
-export function initPreviewPanel(): void {
-  previewFrame = document.getElementById('preview-iframe') as HTMLIFrameElement;
-  const addressBar = document.getElementById('address-bar') as HTMLInputElement;
-  const goBtn = document.getElementById('go-btn');
+let previewIframe: HTMLIFrameElement | null = null;
+let addressBar: HTMLInputElement | null = null;
+
+export function initPreview(): void {
+  previewIframe = document.getElementById('preview-iframe') as HTMLIFrameElement;
+  addressBar = document.getElementById('address-bar') as HTMLInputElement;
 
   if (addressBar) {
     addressBar.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
-        navigateToUrl(addressBar.value);
+        const url = normalizeUrl(addressBar!.value);
+        loadPreviewUrl(url);
       }
     });
   }
 
-  goBtn?.addEventListener('click', () => {
-    if (addressBar) {
-      navigateToUrl(addressBar.value);
+  // Listen for console messages from iframe
+  window.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'console') {
+      const { level, args } = event.data;
+      const consoleMethod = (console as unknown as Record<string, (...args: unknown[]) => void>)[level] || console.log;
+      consoleMethod.apply(console, ['[Preview]', ...args]);
     }
   });
 }
 
-export function navigateToUrl(url: string): void {
-  if (!previewFrame) return;
-
-  // Auto-prepend http:// if no protocol specified
-  let finalUrl = url.trim();
-  if (finalUrl && !finalUrl.match(/^https?:\/\//i)) {
-    finalUrl = 'http://' + finalUrl;
+function normalizeUrl(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return '';
+  
+  // If no protocol specified, prepend http://
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return `http://${trimmed}`;
   }
+  return trimmed;
+}
 
-  if (finalUrl) {
-    previewFrame.src = finalUrl;
-    
-    // Update address bar
-    const addressBar = document.getElementById('address-bar') as HTMLInputElement;
+export function loadPreviewUrl(url: string): void {
+  if (previewIframe && url) {
+    previewIframe.src = url;
     if (addressBar) {
-      addressBar.value = finalUrl;
+      addressBar.value = url;
     }
   }
 }
 
-export function loadPreviewUrl(url: string): void {
-  navigateToUrl(url);
-  
-  // Switch to Browser tab
-  const browserTab = document.getElementById('browser-tab');
-  const editTab = document.getElementById('edit-tab');
-  const browserPanel = document.getElementById('browser-panel');
-  const editPanel = document.getElementById('edit-panel');
-
-  browserTab?.classList.add('active');
-  editTab?.classList.remove('active');
-  browserPanel?.classList.add('active');
-  editPanel?.classList.remove('active');
-}
-
 export function loadPreviewContent(html: string): void {
-  if (!previewFrame) return;
+  if (!previewIframe) return;
 
   // Inject console forwarding script
-  const consoleScript = `
+  const consoleForwarder = `
     <script>
       (function() {
-        const originalConsole = {
-          log: console.log,
-          warn: console.warn,
-          error: console.error
-        };
-        
-        ['log', 'warn', 'error'].forEach(method => {
-          console[method] = function(...args) {
-            originalConsole[method].apply(console, args);
-            parent.postMessage({
-              type: 'console',
-              method: method,
-              args: args.map(arg => {
-                try {
-                  return typeof arg === 'object' ? JSON.stringify(arg) : String(arg);
-                } catch {
-                  return String(arg);
-                }
-              })
-            }, '*');
+        const origConsole = {};
+        ['log', 'warn', 'error', 'info', 'debug'].forEach(function(level) {
+          origConsole[level] = console[level];
+          console[level] = function() {
+            origConsole[level].apply(console, arguments);
+            try {
+              parent.postMessage({
+                type: 'console',
+                level: level,
+                args: Array.from(arguments).map(function(arg) {
+                  try { return JSON.parse(JSON.stringify(arg)); }
+                  catch { return String(arg); }
+                })
+              }, '*');
+            } catch {}
           };
         });
       })();
     </script>
   `;
 
-  // Insert script into head
+  // Insert script into head if there's a head, otherwise prepend to content
   let modifiedHtml = html;
-  if (html.includes('<head>')) {
-    modifiedHtml = html.replace('<head>', '<head>' + consoleScript);
-  } else if (html.includes('<html>')) {
-    modifiedHtml = html.replace('<html>', '<html><head>' + consoleScript + '</head>');
+  if (/<head[^>]*>/i.test(html)) {
+    modifiedHtml = html.replace(/<head([^>]*)>/i, `<head$1>${consoleForwarder}`);
+  } else if (/<html[^>]*>/i.test(html)) {
+    modifiedHtml = html.replace(/<html([^>]*)>/i, `<html$1><head>${consoleForwarder}</head>`);
   } else {
-    modifiedHtml = consoleScript + html;
+    modifiedHtml = consoleForwarder + html;
   }
 
-  previewFrame.srcdoc = modifiedHtml;
-}
-
-export function clearPreview(): void {
-  if (previewFrame) {
-    previewFrame.src = 'about:blank';
-    previewFrame.srcdoc = '';
-  }
-  
-  const addressBar = document.getElementById('address-bar') as HTMLInputElement;
+  previewIframe.srcdoc = modifiedHtml;
   if (addressBar) {
     addressBar.value = '';
   }
+}
+
+export function showPreview(url: string): void {
+  // Switch to Browser tab
+  const browserTab = document.getElementById('browser-tab');
+  if (browserTab) {
+    browserTab.click();
+  }
+  
+  // Expand the preview panel if collapsed
+  expandPreviewPanel();
+  
+  // Load the URL
+  loadPreviewUrl(url);
 }

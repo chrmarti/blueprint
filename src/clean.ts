@@ -1,110 +1,97 @@
-// Clean module - workspace cleanup based on .blueprintfiles
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See License.txt in the project root for license information.
 
 import * as fs from 'fs';
 import * as path from 'path';
 
-export interface CleanResult {
+interface CleanResult {
   ok: boolean;
   deleted: string[];
   error?: string;
 }
 
-export interface CleanOptions {
-  dryRun?: boolean;
-}
-
 /**
- * Parse .blueprintfiles content and return a Set of paths to keep.
- * Always includes .blueprintfiles and .git implicitly.
+ * Parse a .blueprintfiles file and return the list of paths to keep.
+ * - One path per line
+ * - Lines starting with # are comments
+ * - Blank lines are ignored
+ * - Trailing / on directories is stripped
  */
-export function parseBlueprintFiles(content: string): Set<string> {
-  const keep = new Set<string>(['.blueprintfiles', '.git']);
+function parseBlueprintFiles(content: string): string[] {
+  const paths: string[] = [];
   
   for (const line of content.split('\n')) {
     const trimmed = line.trim();
+    
     // Skip empty lines and comments
     if (!trimmed || trimmed.startsWith('#')) {
       continue;
     }
-    // Remove trailing slash from directories
-    const normalized = trimmed.replace(/\/$/, '');
-    keep.add(normalized);
+    
+    // Strip trailing slash
+    const cleanPath = trimmed.replace(/\/+$/, '');
+    paths.push(cleanPath);
   }
   
-  return keep;
+  return paths;
 }
 
 /**
- * Clean the workspace by removing all root-level entries not listed in .blueprintfiles.
+ * Clean a workspace by removing all root-level entries not listed in .blueprintfiles.
+ * Always preserves .blueprintfiles itself and .git.
  */
 export async function cleanWorkspace(
   workspaceFolder: string,
-  options: CleanOptions = {}
+  dryRun: boolean = false
 ): Promise<CleanResult> {
-  const { dryRun = false } = options;
-  const deleted: string[] = [];
-
-  try {
-    // Read .blueprintfiles
-    const blueprintFilesPath = path.join(workspaceFolder, '.blueprintfiles');
-    
-    if (!fs.existsSync(blueprintFilesPath)) {
-      return {
-        ok: false,
-        deleted: [],
-        error: 'No .blueprintfiles found. Create one to define which files to keep.',
-      };
+  const blueprintFilesPath = path.join(workspaceFolder, '.blueprintfiles');
+  
+  // Check if .blueprintfiles exists
+  if (!fs.existsSync(blueprintFilesPath)) {
+    return {
+      ok: false,
+      deleted: [],
+      error: 'No .blueprintfiles found in workspace root. Create one to specify which files to keep.',
+    };
+  }
+  
+  // Parse the file
+  const content = fs.readFileSync(blueprintFilesPath, 'utf-8');
+  const keepPaths = new Set(parseBlueprintFiles(content));
+  
+  // Always keep these
+  keepPaths.add('.blueprintfiles');
+  keepPaths.add('.git');
+  
+  // List root entries
+  const entries = fs.readdirSync(workspaceFolder);
+  const toDelete: string[] = [];
+  
+  for (const entry of entries) {
+    if (!keepPaths.has(entry)) {
+      toDelete.push(entry);
     }
-
-    const content = fs.readFileSync(blueprintFilesPath, 'utf-8');
-    const keep = parseBlueprintFiles(content);
-
-    // Read root directory entries
-    const entries = fs.readdirSync(workspaceFolder, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const name = entry.name;
-      
-      // Skip hidden files except those explicitly listed
-      if (name.startsWith('.') && !keep.has(name)) {
-        // Always keep .git
-        if (name === '.git') continue;
-        // Always keep .blueprintfiles
-        if (name === '.blueprintfiles') continue;
-      }
-
-      // Check if this entry should be kept
-      if (keep.has(name)) {
-        continue;
-      }
-
-      // Delete this entry
-      const fullPath = path.join(workspaceFolder, name);
-      
-      if (!dryRun) {
-        if (entry.isDirectory()) {
+  }
+  
+  // Delete if not dry run
+  if (!dryRun) {
+    for (const entry of toDelete) {
+      const fullPath = path.join(workspaceFolder, entry);
+      try {
+        const stat = fs.statSync(fullPath);
+        if (stat.isDirectory()) {
           fs.rmSync(fullPath, { recursive: true, force: true });
         } else {
           fs.unlinkSync(fullPath);
         }
+      } catch (err) {
+        console.error(`Failed to delete ${entry}:`, err);
       }
-      
-      deleted.push(name);
     }
-
-    return { ok: true, deleted };
-  } catch (error) {
-    return {
-      ok: false,
-      deleted,
-      error: error instanceof Error ? error.message : String(error),
-    };
   }
-}
-
-/**
- * Get the list of entries that would be deleted (for preview).
- */
-export async function previewClean(workspaceFolder: string): Promise<CleanResult> {
-  return cleanWorkspace(workspaceFolder, { dryRun: true });
+  
+  return {
+    ok: true,
+    deleted: toDelete,
+  };
 }

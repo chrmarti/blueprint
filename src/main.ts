@@ -1,79 +1,84 @@
-// Main renderer entry point - boots all modules
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See License.txt in the project root for license information.
 
-import { initAuth } from './auth.js';
-import { initFilesPanel, setOnFileSelect, openFolder, refreshFileTree } from './files.js';
-import { initEditorPanel, loadFile } from './editor.js';
-import { initPreviewPanel } from './preview.js';
-import { initTerminalPanel, spawnTerminal } from './terminal.js';
-import { initImplementerPanel } from './implementer.js';
-import { initChatPanel } from './chat.js';
-import { initSettingsPanel } from './settings.js';
+import { serverAPI } from './api-client.js';
 import { initLayout } from './layout.js';
+import { initEditor } from './editor.js';
+import { initPreview } from './preview.js';
+import { initFiles, refreshFileTree } from './files.js';
+import { initTerminal } from './terminal.js';
+import { initAuth, loadModels } from './auth.js';
+import { initSettings } from './settings.js';
+import { initImplementer } from './implementer.js';
+import { initChat } from './chat.js';
 
-async function main(): Promise<void> {
-  console.log('Blueprint Implementer starting...');
+// Initialize all modules on DOM ready
+document.addEventListener('DOMContentLoaded', async () => {
+  console.log('Blueprint Implementer initializing...');
 
   // Initialize layout first
   initLayout();
 
-  // Initialize all panels
-  initEditorPanel();
-  initPreviewPanel();
-  initTerminalPanel();
-  initImplementerPanel();
-  initChatPanel();
+  // Initialize UI modules
+  initEditor();
+  initPreview();
+  initFiles();
+  initTerminal();
+  initSettings();
+  initImplementer();
+  initChat();
 
-  // Set up file selection handler
-  setOnFileSelect(async (filePath) => {
-    await loadFile(filePath);
-  });
-
-  // Initialize files panel (loads workspace folder)
-  await initFilesPanel();
-
-  // Initialize settings (loads models, theme)
-  await initSettingsPanel();
-
-  // Initialize authentication
-  await initAuth();
-
-  // Set up Open Folder button
-  document.getElementById('open-folder-btn')?.addEventListener('click', async () => {
-    const folder = await window.electronAPI.openFolderDialog();
-    if (folder) {
-      await openFolder(folder);
-      // Respawn terminal with new cwd
-      await spawnTerminal();
+  // Load workspace info
+  try {
+    const folder = await serverAPI.getWorkspaceFolder();
+    const folderName = folder.split('/').pop() || folder;
+    const workspaceEl = document.getElementById('workspace-name');
+    if (workspaceEl) {
+      workspaceEl.textContent = folderName;
     }
-  });
+  } catch (err) {
+    console.error('Failed to get workspace folder:', err);
+  }
 
-  // Set up tab switching for right panel (Chat/Output)
-  const chatTab = document.getElementById('chat-tab');
-  const outputTab = document.getElementById('output-tab');
-  const chatPanel = document.getElementById('chat-panel');
-  const outputPanel = document.getElementById('output-panel');
+  // Initialize auth and load models
+  await initAuth();
+  await loadModels();
 
-  chatTab?.addEventListener('click', () => {
-    chatTab.classList.add('active');
-    outputTab?.classList.remove('active');
-    chatPanel?.classList.add('active');
-    outputPanel?.classList.remove('active');
-  });
-
-  outputTab?.addEventListener('click', () => {
-    outputTab.classList.add('active');
-    chatTab?.classList.remove('active');
-    outputPanel?.classList.add('active');
-    chatPanel?.classList.remove('active');
-  });
-
-  // Listen for custom file-changed events
-  document.addEventListener('files-changed', () => {
-    refreshFileTree();
-  });
+  // Setup clean button
+  const cleanBtn = document.getElementById('clean-btn');
+  if (cleanBtn) {
+    cleanBtn.addEventListener('click', handleClean);
+  }
 
   console.log('Blueprint Implementer ready');
-}
+});
 
-// Start the app
-main().catch(console.error);
+async function handleClean(): Promise<void> {
+  // First do a dry run to see what would be deleted
+  const result = await serverAPI.cleanWorkspace(true);
+  
+  if (!result.ok) {
+    alert(result.error || 'Clean failed');
+    return;
+  }
+  
+  if (result.deleted.length === 0) {
+    alert('Nothing to clean - all files are in .blueprintfiles');
+    return;
+  }
+  
+  // Show confirmation
+  const message = `The following entries will be deleted:\n\n${result.deleted.join('\n')}\n\nContinue?`;
+  if (!confirm(message)) {
+    return;
+  }
+  
+  // Actually clean
+  const cleanResult = await serverAPI.cleanWorkspace(false);
+  if (cleanResult.ok) {
+    alert(`Deleted ${cleanResult.deleted.length} entries`);
+    await refreshFileTree();
+  } else {
+    alert(cleanResult.error || 'Clean failed');
+  }
+}

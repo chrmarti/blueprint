@@ -1,105 +1,131 @@
-// Terminal module - integrated terminal panel with xterm.js and node-pty
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See License.txt in the project root for license information.
 
+import { serverAPI } from './api-client.js';
+import { getTheme } from './layout.js';
 import { Terminal } from '@xterm/xterm';
-import { loadSettings } from './storage.js';
 
 let terminal: Terminal | null = null;
-let terminalContainer: HTMLElement | null = null;
+let terminalConnection: ReturnType<typeof serverAPI.connectTerminal> | null = null;
 
-export function initTerminalPanel(): void {
-  terminalContainer = document.getElementById('terminal-container');
-  if (!terminalContainer) return;
+export function initTerminal(): void {
+  const container = document.getElementById('terminal-container');
+  if (!container) return;
 
-  // Create terminal instance
   terminal = new Terminal({
+    fontFamily: '"SF Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, monospace',
+    fontSize: 14,
     cursorBlink: true,
     cursorStyle: 'bar',
-    fontSize: 14,
-    fontFamily: '"SF Mono", "Fira Code", "Monaco", "Inconsolata", monospace',
-    theme: getTerminalTheme(),
+    theme: getTerminalTheme(getTheme()),
   });
 
-  terminal.open(terminalContainer);
+  terminal.open(container);
 
-  // Set up data handlers
-  window.electronAPI.onTerminalData((data) => {
-    terminal?.write(data);
-  });
+  // Connect to WebSocket
+  connectTerminal();
 
-  window.electronAPI.onTerminalExit(() => {
-    terminal?.writeln('\r\n[Process exited]');
-  });
-
-  // Send keystrokes to pty
-  terminal.onData((data) => {
-    window.electronAPI.terminalWrite(data);
-  });
-
-  // Set up resize observer
+  // Setup resize observer for auto-fitting
   const resizeObserver = new ResizeObserver(() => {
     fitTerminal();
   });
-  resizeObserver.observe(terminalContainer);
+  resizeObserver.observe(container);
 
-  // Spawn initial shell
-  spawnTerminal();
+  // Listen for theme changes
+  window.addEventListener('theme-changed', (e) => {
+    const event = e as CustomEvent<{ theme: 'light' | 'dark' }>;
+    updateTerminalTheme(event.detail.theme);
+  });
 }
 
-export async function spawnTerminal(): Promise<void> {
-  const result = await window.electronAPI.terminalSpawn();
-  if (result.ok) {
-    // Fit terminal after spawn (ResizeObserver may not fire if size hasn't changed)
-    setTimeout(fitTerminal, 100);
-  }
-}
-
-export function fitTerminal(): void {
-  if (!terminal || !terminalContainer) return;
-
-  const containerWidth = terminalContainer.clientWidth;
-  const containerHeight = terminalContainer.clientHeight;
-
-  if (containerWidth === 0 || containerHeight === 0) return;
-
-  // Calculate cell dimensions
-  const cellWidth = terminal.options.fontSize! * 0.6;
-  const cellHeight = terminal.options.fontSize! * 1.2;
-
-  const cols = Math.floor(containerWidth / cellWidth);
-  const rows = Math.floor(containerHeight / cellHeight);
-
-  if (cols > 0 && rows > 0) {
-    terminal.resize(cols, rows);
-    window.electronAPI.terminalResize(cols, rows);
-  }
-}
-
-export function updateTerminalTheme(): void {
-  if (!terminal) return;
-  terminal.options.theme = getTerminalTheme();
-}
-
-function getTerminalTheme(): { background: string; foreground: string; cursor: string } {
-  const settings = loadSettings();
-  if (settings.theme === 'dark') {
-    return {
-      background: '#1e1e1e',
-      foreground: '#d4d4d4',
-      cursor: '#d4d4d4',
-    };
-  } else {
+function getTerminalTheme(theme: 'light' | 'dark'): { background: string; foreground: string; cursor: string } {
+  if (theme === 'light') {
     return {
       background: '#ffffff',
       foreground: '#1e1e1e',
       cursor: '#1e1e1e',
     };
   }
+  return {
+    background: '#1e1e1e',
+    foreground: '#d4d4d4',
+    cursor: '#d4d4d4',
+  };
 }
 
-export function clearTerminal(): void {
-  terminal?.clear();
+export function updateTerminalTheme(theme: 'light' | 'dark'): void {
+  if (terminal) {
+    terminal.options.theme = getTerminalTheme(theme);
+  }
 }
 
-export function killTerminal(): void {
-  window.electronAPI.terminalKill();
+function connectTerminal(): void {
+  terminalConnection = serverAPI.connectTerminal();
+
+  terminalConnection.onData((data) => {
+    if (terminal) {
+      terminal.write(data);
+    }
+  });
+
+  terminalConnection.onExit(() => {
+    if (terminal) {
+      terminal.writeln('\r\n[Process exited]');
+    }
+  });
+
+  // Wait for connection to open before spawning
+  setTimeout(() => {
+    if (terminalConnection) {
+      // Spawn shell
+      terminalConnection.send({ type: 'spawn' });
+      // Send initial resize
+      fitTerminal();
+    }
+  }, 100);
+
+  // Forward user input
+  if (terminal) {
+    terminal.onData((data) => {
+      if (terminalConnection) {
+        terminalConnection.send({ type: 'write', data });
+      }
+    });
+  }
+}
+
+function fitTerminal(): void {
+  if (!terminal) return;
+  
+  const container = document.getElementById('terminal-container');
+  if (!container) return;
+
+  // Calculate available dimensions
+  const dims = terminal.element;
+  if (!dims) return;
+
+  const cellWidth = dims.querySelector('.xterm-char-measure-element')?.getBoundingClientRect().width || 9;
+  const cellHeight = 17; // Approximate line height
+  
+  const cols = Math.floor(container.clientWidth / cellWidth);
+  const rows = Math.floor(container.clientHeight / cellHeight);
+
+  if (cols > 0 && rows > 0) {
+    terminal.resize(cols, rows);
+    if (terminalConnection) {
+      terminalConnection.send({ type: 'resize', cols, rows });
+    }
+  }
+}
+
+export function closeTerminal(): void {
+  if (terminalConnection) {
+    terminalConnection.send({ type: 'kill' });
+    terminalConnection.close();
+    terminalConnection = null;
+  }
+  if (terminal) {
+    terminal.dispose();
+    terminal = null;
+  }
 }

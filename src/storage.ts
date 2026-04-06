@@ -1,10 +1,5 @@
-// Storage module - localStorage persistence layer
-
-const STORAGE_KEYS = {
-  SETTINGS: 'blueprint-settings',
-  HISTORY: 'blueprint-history',
-  LAST_FOLDER: 'blueprint-last-folder',
-} as const;
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See License.txt in the project root for license information.
 
 export interface Settings {
   theme: 'light' | 'dark';
@@ -17,104 +12,105 @@ export interface Settings {
 export interface HistoryEntry {
   id: string;
   timestamp: number;
-  workspaceFolder: string;
   model: string;
-  success: boolean;
-  outputSize: number;
+  prompt: string;
+  result: 'success' | 'error';
 }
 
-const DEFAULT_SETTINGS: Settings = {
+const SETTINGS_KEY = 'blueprint-settings';
+const HISTORY_KEY = 'blueprint-history';
+const OUTPUT_KEY = 'blueprint-output';
+
+const defaultSettings: Settings = {
   theme: 'dark',
   fontSize: 14,
   model: 'claude-opus-4.6-1m',
-  maxTokens: 16384,
+  maxTokens: 16000,
   temperature: 0,
 };
 
 export function loadSettings(): Settings {
   try {
-    const stored = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+    const stored = localStorage.getItem(SETTINGS_KEY);
     if (stored) {
-      return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
+      return { ...defaultSettings, ...JSON.parse(stored) };
     }
   } catch {
-    console.error('Failed to load settings from localStorage');
+    // Ignore parse errors
   }
-  return { ...DEFAULT_SETTINGS };
+  return { ...defaultSettings };
 }
 
 export function saveSettings(settings: Settings): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
-  } catch {
-    console.error('Failed to save settings to localStorage');
-  }
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 }
 
 export function loadHistory(): HistoryEntry[] {
   try {
-    const stored = localStorage.getItem(STORAGE_KEYS.HISTORY);
+    const stored = localStorage.getItem(HISTORY_KEY);
     if (stored) {
       return JSON.parse(stored);
     }
   } catch {
-    console.error('Failed to load history from localStorage');
+    // Ignore parse errors
   }
   return [];
 }
 
 export function saveHistory(history: HistoryEntry[]): void {
-  try {
-    // Keep only the last 50 entries
-    const trimmed = history.slice(-50);
-    localStorage.setItem(STORAGE_KEYS.HISTORY, JSON.stringify(trimmed));
-  } catch {
-    console.error('Failed to save history to localStorage');
-  }
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
 }
 
-export function addHistoryEntry(entry: Omit<HistoryEntry, 'id' | 'timestamp'>): void {
+export function addHistoryEntry(entry: Omit<HistoryEntry, 'id' | 'timestamp'>): HistoryEntry {
   const history = loadHistory();
-  history.push({
+  const newEntry: HistoryEntry = {
     ...entry,
     id: crypto.randomUUID(),
     timestamp: Date.now(),
-  });
+  };
+  history.unshift(newEntry);
+  // Keep only the last 50 entries
+  if (history.length > 50) {
+    history.length = 50;
+  }
   saveHistory(history);
+  return newEntry;
 }
 
-export function getLastFolder(): string | null {
-  try {
-    return localStorage.getItem(STORAGE_KEYS.LAST_FOLDER);
-  } catch {
-    return null;
+export function loadOutput(): string {
+  return localStorage.getItem(OUTPUT_KEY) || '';
+}
+
+export function saveOutput(output: string): void {
+  localStorage.setItem(OUTPUT_KEY, output);
+}
+
+export function clearOutput(): void {
+  localStorage.removeItem(OUTPUT_KEY);
+}
+
+export interface ProjectState {
+  settings: Settings;
+  history: HistoryEntry[];
+  output: string;
+}
+
+export function exportProjectState(): ProjectState {
+  return {
+    settings: loadSettings(),
+    history: loadHistory(),
+    output: loadOutput(),
+  };
+}
+
+export function importProjectState(state: ProjectState): void {
+  if (state.settings) {
+    saveSettings(state.settings);
   }
-}
-
-export function setLastFolder(folder: string): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.LAST_FOLDER, folder);
-  } catch {
-    console.error('Failed to save last folder to localStorage');
+  if (state.history) {
+    saveHistory(state.history);
   }
-}
-
-export function exportProjectState(): string {
-  const settings = loadSettings();
-  const history = loadHistory();
-  return JSON.stringify({ settings, history, exportedAt: new Date().toISOString() }, null, 2);
-}
-
-export function importProjectState(json: string): void {
-  try {
-    const data = JSON.parse(json);
-    if (data.settings) {
-      saveSettings({ ...DEFAULT_SETTINGS, ...data.settings });
-    }
-    if (data.history && Array.isArray(data.history)) {
-      saveHistory(data.history);
-    }
-  } catch (e) {
-    throw new Error('Invalid project state JSON');
+  if (state.output) {
+    saveOutput(state.output);
   }
 }

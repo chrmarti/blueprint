@@ -1,98 +1,146 @@
-// Layout module - drag-handle resizable three-column layout
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See License.txt in the project root for license information.
+
+import { loadSettings, saveSettings, type Settings } from './storage.js';
+
+let currentSettings: Settings;
 
 export function initLayout(): void {
-  initVerticalDragHandles();
-  initHorizontalDragHandle();
+  currentSettings = loadSettings();
+  applyTheme(currentSettings.theme);
+  setupDragHandles();
+  setupPanelCollapse();
 }
 
-function initVerticalDragHandles(): void {
+function applyTheme(theme: 'light' | 'dark'): void {
+  document.documentElement.setAttribute('data-theme', theme);
+}
+
+export function setTheme(theme: 'light' | 'dark'): void {
+  currentSettings.theme = theme;
+  saveSettings(currentSettings);
+  applyTheme(theme);
+  // Dispatch event for terminal theme update
+  window.dispatchEvent(new CustomEvent('theme-changed', { detail: { theme } }));
+}
+
+export function getTheme(): 'light' | 'dark' {
+  return currentSettings.theme;
+}
+
+function setupDragHandles(): void {
+  // Vertical drag handles between columns
   const leftHandle = document.getElementById('drag-handle-left');
   const rightHandle = document.getElementById('drag-handle-right');
-  const sidebar = document.getElementById('sidebar');
-  const rightPanel = document.getElementById('right-panel');
-
-  if (leftHandle && sidebar) {
-    setupVerticalDrag(leftHandle, sidebar, 'left');
+  
+  if (leftHandle) {
+    setupVerticalDrag(leftHandle, 'sidebar', 'left');
+  }
+  
+  if (rightHandle) {
+    setupVerticalDrag(rightHandle, 'right-panel', 'right');
   }
 
-  if (rightHandle && rightPanel) {
-    setupVerticalDrag(rightHandle, rightPanel, 'right');
+  // Horizontal drag handle for terminal
+  const terminalHandle = document.getElementById('drag-handle-terminal');
+  if (terminalHandle) {
+    setupHorizontalDrag(terminalHandle);
   }
 }
 
-function setupVerticalDrag(handle: HTMLElement, panel: HTMLElement, side: 'left' | 'right'): void {
+function setupVerticalDrag(handle: HTMLElement, panelId: string, side: 'left' | 'right'): void {
+  let isDragging = false;
   let startX = 0;
   let startWidth = 0;
+  const panel = document.getElementById(panelId);
+  
+  if (!panel) return;
 
-  const onMouseDown = (e: MouseEvent) => {
-    e.preventDefault();
+  handle.addEventListener('mousedown', (e) => {
+    isDragging = true;
     startX = e.clientX;
     startWidth = panel.offsetWidth;
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-  };
+  });
 
-  const onMouseMove = (e: MouseEvent) => {
-    const diff = e.clientX - startX;
-    let newWidth: number;
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
     
-    if (side === 'left') {
-      newWidth = startWidth + diff;
-    } else {
-      newWidth = startWidth - diff;
-    }
-
-    // Enforce min/max widths
-    newWidth = Math.max(150, Math.min(600, newWidth));
+    const delta = side === 'left' ? e.clientX - startX : startX - e.clientX;
+    const newWidth = Math.max(150, Math.min(600, startWidth + delta));
     panel.style.width = `${newWidth}px`;
-  };
+    panel.style.flexShrink = '0';
+    panel.style.flexGrow = '0';
+  });
 
-  const onMouseUp = () => {
-    document.removeEventListener('mousemove', onMouseMove);
-    document.removeEventListener('mouseup', onMouseUp);
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-  };
-
-  handle.addEventListener('mousedown', onMouseDown);
+  document.addEventListener('mouseup', () => {
+    if (isDragging) {
+      isDragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+  });
 }
 
-function initHorizontalDragHandle(): void {
-  const handle = document.getElementById('drag-handle-h');
-  const terminalPanel = document.getElementById('terminal-panel');
-
-  if (!handle || !terminalPanel) return;
-
+function setupHorizontalDrag(handle: HTMLElement): void {
+  let isDragging = false;
   let startY = 0;
   let startHeight = 0;
+  const terminal = document.getElementById('terminal-panel');
+  
+  if (!terminal) return;
 
-  const onMouseDown = (e: MouseEvent) => {
-    e.preventDefault();
+  handle.addEventListener('mousedown', (e) => {
+    isDragging = true;
     startY = e.clientY;
-    startHeight = terminalPanel.offsetHeight;
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    startHeight = terminal.offsetHeight;
     document.body.style.cursor = 'row-resize';
     document.body.style.userSelect = 'none';
-  };
+  });
 
-  const onMouseMove = (e: MouseEvent) => {
-    const diff = startY - e.clientY;
-    let newHeight = startHeight + diff;
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    
+    const delta = startY - e.clientY;
+    const newHeight = Math.max(60, Math.min(400, startHeight + delta));
+    terminal.style.height = `${newHeight}px`;
+  });
 
-    // Enforce min/max heights
-    newHeight = Math.max(60, Math.min(500, newHeight));
-    terminalPanel.style.height = `${newHeight}px`;
-  };
+  document.addEventListener('mouseup', () => {
+    if (isDragging) {
+      isDragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      // Trigger resize event for terminal to refit
+      window.dispatchEvent(new Event('resize'));
+    }
+  });
+}
 
-  const onMouseUp = () => {
-    document.removeEventListener('mousemove', onMouseMove);
-    document.removeEventListener('mouseup', onMouseUp);
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-  };
+function setupPanelCollapse(): void {
+  // Setup collapse toggles for each panel
+  const collapseButtons = document.querySelectorAll('[data-collapse]');
+  collapseButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const panelId = (btn as HTMLElement).dataset.collapse;
+      if (panelId) {
+        togglePanelCollapse(panelId);
+      }
+    });
+  });
+}
 
-  handle.addEventListener('mousedown', onMouseDown);
+function togglePanelCollapse(panelId: string): void {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  
+  panel.classList.toggle('collapsed');
+}
+
+export function expandPreviewPanel(): void {
+  const panel = document.getElementById('right-panel');
+  if (panel) {
+    panel.classList.remove('collapsed');
+  }
 }

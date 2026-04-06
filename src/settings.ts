@@ -1,253 +1,199 @@
-// Settings module - settings modal, theme, history drawer
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See License.txt in the project root for license information.
 
-import { loadSettings, saveSettings, loadHistory, exportProjectState, importProjectState, Settings } from './storage.js';
-import { updateTerminalTheme } from './terminal.js';
-import { updateOutputTheme } from './implementer.js';
+import { loadSettings, saveSettings, loadHistory, exportProjectState, importProjectState, type Settings, type HistoryEntry } from './storage.js';
+import { setTheme } from './layout.js';
+import { loadModels } from './auth.js';
 
+let settingsModal: HTMLElement | null = null;
+let historyDrawer: HTMLElement | null = null;
 let currentSettings: Settings;
 
-export async function initSettingsPanel(): Promise<void> {
+export function initSettings(): void {
   currentSettings = loadSettings();
-  applyTheme(currentSettings.theme);
+  settingsModal = document.getElementById('settings-modal');
+  historyDrawer = document.getElementById('history-drawer');
 
   // Settings button
-  document.getElementById('settings-btn')?.addEventListener('click', () => {
-    openSettingsModal();
-  });
-
-  // Clean button
-  document.getElementById('clean-btn')?.addEventListener('click', () => {
-    cleanWorkspace();
-  });
-
-  // Load models into dropdown
-  await loadModels();
-}
-
-async function loadModels(): Promise<void> {
-  const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
-  if (!modelSelect) return;
-
-  try {
-    const result = await window.electronAPI.listModels();
-    
-    if (result.ok && result.models && result.models.length > 0) {
-      modelSelect.innerHTML = '';
-      for (const model of result.models) {
-        const option = document.createElement('option');
-        option.value = model.id;
-        option.textContent = model.name;
-        if (model.id === currentSettings.model) {
-          option.selected = true;
-        }
-        modelSelect.appendChild(option);
-      }
-    } else {
-      // Show unavailable state
-      modelSelect.innerHTML = '<option value="">Models unavailable</option>';
-    }
-  } catch (error) {
-    console.error('Failed to load models:', error);
-    modelSelect.innerHTML = '<option value="">Failed to load models</option>';
+  const settingsBtn = document.getElementById('settings-btn');
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', openSettings);
   }
-
-  // Update settings when model changes
-  modelSelect.addEventListener('change', () => {
-    currentSettings.model = modelSelect.value;
-    saveSettings(currentSettings);
-  });
-}
-
-function openSettingsModal(): void {
-  const modal = document.getElementById('settings-modal');
-  if (!modal) return;
-
-  // Populate current settings
-  const themeSelect = document.getElementById('theme-select') as HTMLSelectElement;
-  const fontSizeInput = document.getElementById('font-size-input') as HTMLInputElement;
-  const temperatureInput = document.getElementById('temperature-input') as HTMLInputElement;
-
-  if (themeSelect) themeSelect.value = currentSettings.theme;
-  if (fontSizeInput) fontSizeInput.value = String(currentSettings.fontSize);
-  if (temperatureInput) temperatureInput.value = String(currentSettings.temperature);
-
-  // Show modal
-  modal.classList.add('visible');
-
-  // Set up event handlers
-  const closeBtn = modal.querySelector('.close-btn');
-  closeBtn?.addEventListener('click', () => closeSettingsModal());
-
-  // Close on Esc
-  const handleEsc = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      closeSettingsModal();
-      document.removeEventListener('keydown', handleEsc);
-    }
-  };
-  document.addEventListener('keydown', handleEsc);
-
-  // Theme change
-  themeSelect?.addEventListener('change', () => {
-    currentSettings.theme = themeSelect.value as 'light' | 'dark';
-    saveSettings(currentSettings);
-    applyTheme(currentSettings.theme);
-  });
-
-  // Font size change
-  fontSizeInput?.addEventListener('change', () => {
-    currentSettings.fontSize = parseInt(fontSizeInput.value, 10) || 14;
-    saveSettings(currentSettings);
-    applyFontSize(currentSettings.fontSize);
-  });
-
-  // Temperature change
-  temperatureInput?.addEventListener('change', () => {
-    currentSettings.temperature = parseFloat(temperatureInput.value) || 0;
-    saveSettings(currentSettings);
-  });
-
-  // Export button
-  document.getElementById('export-btn')?.addEventListener('click', () => {
-    exportState();
-  });
-
-  // Import button
-  document.getElementById('import-btn')?.addEventListener('click', () => {
-    importState();
-  });
 
   // History button
-  document.getElementById('history-btn')?.addEventListener('click', () => {
-    openHistoryDrawer();
-  });
-}
-
-function closeSettingsModal(): void {
-  const modal = document.getElementById('settings-modal');
-  modal?.classList.remove('visible');
-}
-
-function applyTheme(theme: 'light' | 'dark'): void {
-  document.documentElement.setAttribute('data-theme', theme);
-  updateTerminalTheme();
-  updateOutputTheme();
-}
-
-function applyFontSize(size: number): void {
-  const editor = document.getElementById('editor-textarea') as HTMLTextAreaElement;
-  if (editor) {
-    editor.style.fontSize = `${size}px`;
-  }
-}
-
-async function cleanWorkspace(): Promise<void> {
-  // Preview what would be deleted
-  const result = await window.electronAPI.cleanWorkspace({ dryRun: true });
-  
-  if (!result.ok) {
-    alert(result.error || 'Failed to clean workspace');
-    return;
+  const historyBtn = document.getElementById('history-btn');
+  if (historyBtn) {
+    historyBtn.addEventListener('click', toggleHistory);
   }
 
-  if (result.deleted.length === 0) {
-    alert('No files to clean');
-    return;
+  // Close settings
+  const closeSettingsBtn = document.getElementById('close-settings-btn');
+  if (closeSettingsBtn) {
+    closeSettingsBtn.addEventListener('click', closeSettings);
   }
 
-  // Show confirmation dialog
-  const message = `The following files will be deleted:\n\n${result.deleted.join('\n')}\n\nProceed?`;
-  if (!confirm(message)) return;
-
-  // Perform actual clean
-  const cleanResult = await window.electronAPI.cleanWorkspace({ dryRun: false });
-  
-  if (cleanResult.ok) {
-    alert(`Deleted ${cleanResult.deleted.length} items`);
-    // Refresh file tree
-    const event = new CustomEvent('files-changed');
-    document.dispatchEvent(event);
-  } else {
-    alert(cleanResult.error || 'Failed to clean workspace');
-  }
-}
-
-function exportState(): void {
-  const json = exportProjectState();
-  const blob = new Blob([json], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'blueprint-state.json';
-  a.click();
-  
-  URL.revokeObjectURL(url);
-}
-
-async function importState(): Promise<void> {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.json';
-  
-  input.onchange = async () => {
-    const file = input.files?.[0];
-    if (!file) return;
-    
-    try {
-      const json = await file.text();
-      importProjectState(json);
-      alert('State imported successfully');
-      // Reload settings
-      currentSettings = loadSettings();
-      applyTheme(currentSettings.theme);
-      applyFontSize(currentSettings.fontSize);
-    } catch (error) {
-      alert(`Failed to import: ${error instanceof Error ? error.message : String(error)}`);
+  // ESC to close settings
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeSettings();
     }
-  };
-  
-  input.click();
+  });
+
+  // Click outside to close settings
+  if (settingsModal) {
+    settingsModal.addEventListener('click', (e) => {
+      if (e.target === settingsModal) {
+        closeSettings();
+      }
+    });
+  }
+
+  // Theme toggle
+  const themeToggle = document.getElementById('theme-toggle') as HTMLSelectElement;
+  if (themeToggle) {
+    themeToggle.value = currentSettings.theme;
+    themeToggle.addEventListener('change', () => {
+      const theme = themeToggle.value as 'light' | 'dark';
+      currentSettings.theme = theme;
+      saveSettings(currentSettings);
+      setTheme(theme);
+    });
+  }
+
+  // Font size
+  const fontSizeInput = document.getElementById('font-size') as HTMLInputElement;
+  if (fontSizeInput) {
+    fontSizeInput.value = String(currentSettings.fontSize);
+    fontSizeInput.addEventListener('change', () => {
+      currentSettings.fontSize = parseInt(fontSizeInput.value, 10);
+      saveSettings(currentSettings);
+      document.documentElement.style.setProperty('--editor-font-size', `${currentSettings.fontSize}px`);
+    });
+  }
+
+  // Temperature
+  const tempSlider = document.getElementById('temperature') as HTMLInputElement;
+  const tempValue = document.getElementById('temperature-value');
+  if (tempSlider && tempValue) {
+    tempSlider.value = String(currentSettings.temperature);
+    tempValue.textContent = String(currentSettings.temperature);
+    tempSlider.addEventListener('input', () => {
+      const temp = parseFloat(tempSlider.value);
+      currentSettings.temperature = temp;
+      tempValue.textContent = String(temp);
+      saveSettings(currentSettings);
+    });
+  }
+
+  // Export
+  const exportBtn = document.getElementById('export-btn');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', exportProject);
+  }
+
+  // Import
+  const importBtn = document.getElementById('import-btn');
+  const importInput = document.getElementById('import-input') as HTMLInputElement;
+  if (importBtn && importInput) {
+    importBtn.addEventListener('click', () => importInput.click());
+    importInput.addEventListener('change', () => {
+      const file = importInput.files?.[0];
+      if (file) {
+        importProject(file);
+      }
+    });
+  }
 }
 
-function openHistoryDrawer(): void {
+function openSettings(): void {
+  if (settingsModal) {
+    settingsModal.classList.add('visible');
+  }
+}
+
+function closeSettings(): void {
+  if (settingsModal) {
+    settingsModal.classList.remove('visible');
+  }
+}
+
+function toggleHistory(): void {
+  if (historyDrawer) {
+    historyDrawer.classList.toggle('visible');
+    if (historyDrawer.classList.contains('visible')) {
+      renderHistory();
+    }
+  }
+}
+
+function renderHistory(): void {
+  const list = document.getElementById('history-list');
+  if (!list) return;
+
   const history = loadHistory();
-  
+  list.innerHTML = '';
+
   if (history.length === 0) {
-    alert('No history');
+    list.innerHTML = '<div class="no-history">No implementation history</div>';
     return;
   }
 
-  const drawer = document.getElementById('history-drawer');
-  const list = document.getElementById('history-list');
-  if (!drawer || !list) return;
-
-  list.innerHTML = '';
-  
-  for (const entry of history.slice().reverse()) {
+  for (const entry of history) {
     const item = document.createElement('div');
-    item.className = 'history-item';
+    item.className = `history-item ${entry.result}`;
     
-    const date = new Date(entry.timestamp);
-    const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+    const time = document.createElement('span');
+    time.className = 'history-time';
+    time.textContent = new Date(entry.timestamp).toLocaleString();
+    item.appendChild(time);
     
-    item.innerHTML = `
-      <div class="history-date">${dateStr}</div>
-      <div class="history-folder">${entry.workspaceFolder.split('/').pop()}</div>
-      <div class="history-status ${entry.success ? 'success' : 'error'}">${entry.success ? '✓' : '✗'}</div>
-    `;
+    const model = document.createElement('span');
+    model.className = 'history-model';
+    model.textContent = entry.model;
+    item.appendChild(model);
+    
+    const status = document.createElement('span');
+    status.className = 'history-status';
+    status.textContent = entry.result === 'success' ? '✓' : '✗';
+    item.appendChild(status);
     
     list.appendChild(item);
   }
-
-  drawer.classList.add('visible');
-
-  // Close button
-  drawer.querySelector('.close-btn')?.addEventListener('click', () => {
-    drawer.classList.remove('visible');
-  });
 }
 
-export function getSettings(): Settings {
-  return currentSettings;
+function exportProject(): void {
+  const state = exportProjectState();
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'blueprint-project.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function importProject(file: File): Promise<void> {
+  try {
+    const text = await file.text();
+    const state = JSON.parse(text);
+    importProjectState(state);
+    // Reload settings
+    currentSettings = loadSettings();
+    // Apply theme
+    setTheme(currentSettings.theme);
+    // Close modal
+    closeSettings();
+    alert('Project imported successfully');
+  } catch (err) {
+    alert(`Failed to import project: ${err}`);
+  }
+}
+
+export function getSelectedModel(): string {
+  const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
+  return modelSelect?.value || 'claude-opus-4.5';
+}
+
+export function getTemperature(): number {
+  return currentSettings.temperature;
 }

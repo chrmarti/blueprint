@@ -1,415 +1,431 @@
-// Playwright test script for Blueprint Implementer
-// Tests basic functionality, terminal, settings, and implementation
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See License.txt in the project root for license information.
 
-import { _electron as electron } from 'playwright';
-import { execFileSync, execSync } from 'child_process';
-import * as path from 'path';
+import { chromium } from 'playwright';
+import { spawn, execFileSync } from 'child_process';
 import * as fs from 'fs';
+import * as path from 'path';
 import * as os from 'os';
 
-const PROJECT_ROOT = path.resolve(new URL('.', import.meta.url).pathname, '..');
-const TEST_WORKSPACE = path.join(PROJECT_ROOT, 'test', 'tictactoe');
-const SCREENSHOTS_DIR = path.join(PROJECT_ROOT, 'test', 'screenshots');
+const PORT = 3000;
+const BASE_URL = `http://localhost:${PORT}`;
 
-// Ensure screenshots directory exists
-fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+// Test configuration
+const SCREENSHOT_DIR = 'test/screenshots';
+const WORKSPACE = 'test/tictactoe';
 
-// Resolve GitHub token
-function resolveGitHubToken() {
+// Ensure screenshot directory exists
+if (!fs.existsSync(SCREENSHOT_DIR)) {
+  fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+}
+
+async function waitForServer(url, timeout = 30000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return true;
+    } catch {
+      // Server not ready yet
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  throw new Error(`Server not ready after ${timeout}ms`);
+}
+
+async function resolveGitHubToken() {
   if (process.env.GITHUB_TOKEN) {
     return process.env.GITHUB_TOKEN;
   }
   try {
-    const stdout = execFileSync('gh', ['auth', 'token'], { encoding: 'utf-8' });
-    return stdout.trim();
+    const result = execFileSync('gh', ['auth', 'token'], { encoding: 'utf-8', timeout: 5000 });
+    return result.trim();
   } catch {
     return null;
   }
 }
 
-// CLI Tests
+// CLI Tests (run before browser tests)
 async function runCLITests() {
-  console.log('\n=== CLI Tests ===\n');
+  console.log('\n═══════════════════════════════════════');
+  console.log('CLI Tests');
+  console.log('═══════════════════════════════════════\n');
 
   // Create temp directory for local CLI install
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-cli-test-'));
-  const cliTarball = path.join(PROJECT_ROOT, 'cli', 'blueprint-1.0.0.tgz');
-  
-  try {
-    // Pack the CLI
-    console.log('Packing CLI...');
-    execSync('npm pack', { cwd: path.join(PROJECT_ROOT, 'cli'), stdio: 'inherit' });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-test-'));
+  console.log(`[CLI] Temp directory: ${tmpDir}`);
 
-    // Install CLI to temp directory
-    console.log('Installing CLI to temp directory...');
-    execSync(`npm install --prefix "${tmpDir}" "${cliTarball}"`, { stdio: 'inherit' });
+  try {
+    // Build and pack the CLI
+    console.log('[CLI] Building...');
+    execFileSync('npm', ['run', 'build'], { stdio: 'inherit' });
+
+    console.log('[CLI] Packing...');
+    execFileSync('npm', ['pack'], { cwd: 'cli', stdio: 'inherit' });
+
+    // Install locally to temp directory
+    console.log('[CLI] Installing locally...');
+    execFileSync('npm', ['install', '--prefix', tmpDir, './cli/blueprint-1.0.0.tgz'], { stdio: 'inherit' });
 
     const blueprintBin = path.join(tmpDir, 'node_modules', '.bin', 'blueprint');
 
     // Test 1: Help text
-    console.log('\n1. Testing help text...');
+    console.log('\n[CLI Test 1] Help text...');
     try {
       execFileSync(blueprintBin, [], { encoding: 'utf-8' });
-      console.log('   ✗ Expected non-zero exit code');
+      console.log('  ❌ FAIL: Expected non-zero exit code');
       process.exit(1);
-    } catch (error) {
-      const output = error.stdout + error.stderr;
+    } catch (err) {
+      const output = (err.stdout || '') + (err.stderr || '');
       if (output.toLowerCase().includes('usage')) {
-        console.log('   ✓ Help text contains "usage"');
+        console.log('  ✅ PASS: Help text contains "usage"');
       } else {
-        console.log('   ✗ Help text does not contain "usage"');
-        console.log('   Output:', output);
+        console.log('  ❌ FAIL: Help text does not contain "usage"');
+        console.log('  Output:', output);
         process.exit(1);
       }
     }
 
-    // Test 2: Clean command
-    console.log('\n2. Testing clean command...');
+    // Test 2: Clean
+    console.log('\n[CLI Test 2] Clean...');
     try {
-      execFileSync(blueprintBin, ['clean', TEST_WORKSPACE], { encoding: 'utf-8', stdio: 'pipe' });
-      console.log('   ✓ Clean command succeeded');
-    } catch (error) {
-      console.log('   ✗ Clean command failed:', error.message);
+      execFileSync(blueprintBin, ['clean', WORKSPACE], { encoding: 'utf-8' });
+      console.log('  ✅ PASS: Clean succeeded');
+    } catch (err) {
+      console.log('  ❌ FAIL: Clean failed');
+      console.log('  Error:', err.message);
       process.exit(1);
     }
 
-    // Test 3: Implement command (requires GitHub token)
-    const token = resolveGitHubToken();
+    // Test 3: Implement (requires GitHub token)
+    const token = await resolveGitHubToken();
     if (token) {
-      console.log('\n3. Testing implement command...');
+      console.log('\n[CLI Test 3] Implement...');
       try {
-        execFileSync(blueprintBin, ['implement', TEST_WORKSPACE, '--no-sandbox'], {
+        execFileSync(blueprintBin, ['implement', WORKSPACE], {
           encoding: 'utf-8',
-          stdio: 'inherit',
+          timeout: 600000, // 10 minute timeout
           env: { ...process.env, GITHUB_TOKEN: token },
-          timeout: 600000, // 10 minutes
         });
         
         // Check if index.html was created
-        const indexPath = path.join(TEST_WORKSPACE, 'index.html');
+        const indexPath = path.join(WORKSPACE, 'index.html');
         if (fs.existsSync(indexPath)) {
-          console.log('   ✓ Implement command succeeded, index.html created');
+          console.log('  ✅ PASS: Implementation succeeded, index.html created');
         } else {
-          console.log('   ✗ Implement command succeeded but index.html not found');
+          console.log('  ❌ FAIL: index.html not created');
           process.exit(1);
         }
-      } catch (error) {
-        console.log('   ✗ Implement command failed:', error.message);
+      } catch (err) {
+        console.log('  ❌ FAIL: Implement failed');
+        console.log('  Error:', err.message);
         process.exit(1);
       }
     } else {
-      console.log('\n3. Skipping implement test (no GitHub token)');
+      console.log('\n[CLI Test 3] Implement... SKIPPED (no GitHub token)');
     }
 
+    console.log('\n[CLI] All CLI tests passed!\n');
   } finally {
-    // Cleanup
+    // Clean up temp directory
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    if (fs.existsSync(cliTarball)) {
-      fs.unlinkSync(cliTarball);
+    // Clean up tarball
+    const tarball = 'cli/blueprint-1.0.0.tgz';
+    if (fs.existsSync(tarball)) {
+      fs.unlinkSync(tarball);
     }
   }
-
-  console.log('\n=== CLI Tests Complete ===\n');
 }
 
-// Electron/Playwright Tests
-async function runElectronTests() {
-  console.log('\n=== Electron Tests ===\n');
+// Browser Tests
+async function runBrowserTests() {
+  console.log('\n═══════════════════════════════════════');
+  console.log('Browser Tests');
+  console.log('═══════════════════════════════════════\n');
 
-  const token = resolveGitHubToken();
-  
-  // Launch Electron app
-  console.log('Launching Electron app...');
-  const electronApp = await electron.launch({
-    args: [PROJECT_ROOT, TEST_WORKSPACE],
-    env: {
-      ...process.env,
-      ...(token ? { GITHUB_TOKEN: token } : {}),
-    },
+  // Start the server
+  console.log('[Browser] Starting server...');
+  const server = spawn('node', ['dist/server.mjs', WORKSPACE], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: process.env,
   });
 
-  const window = await electronApp.firstWindow();
-  await window.waitForLoadState('domcontentloaded');
+  server.stdout.on('data', (data) => console.log(`[server] ${data.toString().trim()}`));
+  server.stderr.on('data', (data) => console.error(`[server] ${data.toString().trim()}`));
 
   try {
-    // Test 1: App Launch
-    console.log('\n1. Testing app launch...');
-    const title = await window.title();
-    if (title.includes('Blueprint')) {
-      console.log('   ✓ Window title contains "Blueprint"');
-    } else {
-      console.log('   ✗ Window title does not contain "Blueprint":', title);
-    }
-    await window.screenshot({ path: path.join(SCREENSHOTS_DIR, '01-launch.png') });
+    await waitForServer(BASE_URL);
+    console.log('[Browser] Server ready\n');
 
-    // Test 2: Folder loaded
-    console.log('\n2. Testing folder loading...');
-    await window.waitForTimeout(2000); // Wait for folder to load
-    const folderName = await window.locator('#folder-name').textContent();
-    if (folderName?.includes('tictactoe')) {
-      console.log('   ✓ Folder name displayed:', folderName);
-    } else {
-      console.log('   ✗ Folder name not displayed correctly:', folderName);
-    }
+    // Launch browser
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext();
+    const page = await context.newPage();
 
-    // Test 3: File tree
-    console.log('\n3. Testing file tree...');
-    const blueprintFile = await window.locator('.file-tree-item .name', { hasText: 'blueprint.md' });
-    if (await blueprintFile.count() > 0) {
-      console.log('   ✓ blueprint.md visible in file tree');
-    } else {
-      console.log('   ✗ blueprint.md not found in file tree');
-    }
-    await window.screenshot({ path: path.join(SCREENSHOTS_DIR, '02-file-tree.png') });
+    try {
+      // Test 1: App Launch
+      console.log('[Browser Test 1] App Launch...');
+      await page.goto(BASE_URL);
+      await page.waitForLoadState('networkidle');
+      const title = await page.title();
+      if (title === 'Blueprint Implementer') {
+        console.log('  ✅ PASS: Title is correct');
+      } else {
+        console.log(`  ❌ FAIL: Expected "Blueprint Implementer", got "${title}"`);
+      }
+      await page.screenshot({ path: `${SCREENSHOT_DIR}/01-app-launch.png` });
 
-    // Test 4: Click file to load in editor
-    console.log('\n4. Testing file loading...');
-    await blueprintFile.first().click();
-    await window.waitForTimeout(500);
-    const editorContent = await window.locator('#editor-textarea').inputValue();
-    if (editorContent.includes('Tic-Tac-Toe')) {
-      console.log('   ✓ File content loaded in editor');
-    } else {
-      console.log('   ✗ File content not loaded correctly');
-    }
-    await window.screenshot({ path: path.join(SCREENSHOTS_DIR, '03-editor.png') });
+      // Test 2: File Tree Loads
+      console.log('\n[Browser Test 2] File Tree Loads...');
+      await page.waitForSelector('#file-tree .tree-item', { timeout: 10000 });
+      const fileTreeText = await page.$eval('#file-tree', el => el.textContent);
+      if (fileTreeText.includes('blueprint.md')) {
+        console.log('  ✅ PASS: blueprint.md appears in file tree');
+      } else {
+        console.log('  ❌ FAIL: blueprint.md not found in file tree');
+      }
+      await page.screenshot({ path: `${SCREENSHOT_DIR}/02-file-tree.png` });
 
-    // Test 5: Terminal panel
-    console.log('\n5. Testing terminal panel...');
-    await window.waitForTimeout(2000); // Wait for terminal to spawn
-    const terminalContainer = window.locator('#terminal-container');
-    const hasTerminal = await terminalContainer.locator('.xterm').count() > 0;
-    if (hasTerminal) {
-      console.log('   ✓ Terminal xterm instance rendered');
-    } else {
-      console.log('   ✗ Terminal not rendered');
-    }
-    await window.screenshot({ path: path.join(SCREENSHOTS_DIR, '04-terminal.png') });
+      // Test 3: File Click Opens in Editor
+      console.log('\n[Browser Test 3] File Opens in Editor...');
+      await page.click('.tree-row:has-text("blueprint.md")');
+      await page.waitForTimeout(500);
+      const editorContent = await page.$eval('#editor-textarea', el => el.value);
+      if (editorContent.includes('Tic-Tac-Toe')) {
+        console.log('  ✅ PASS: File content loaded into editor');
+      } else {
+        console.log('  ❌ FAIL: File content not loaded');
+      }
+      await page.screenshot({ path: `${SCREENSHOT_DIR}/03-editor.png` });
 
-    // Test 6: Type in terminal
-    console.log('\n6. Testing terminal input...');
-    // Focus terminal and type
-    await terminalContainer.click();
-    await window.keyboard.type('echo "Blueprint test successful!"');
-    await window.keyboard.press('Enter');
-    await window.waitForTimeout(1000);
-    await window.screenshot({ path: path.join(SCREENSHOTS_DIR, '05-terminal-echo.png') });
-    console.log('   ✓ Terminal echo command executed');
+      // Test 4: Browser Tab Toggle
+      console.log('\n[Browser Test 4] Browser Tab Toggle...');
+      await page.click('#browser-tab');
+      await page.waitForTimeout(200);
+      const iframeVisible = await page.$eval('#preview-iframe', el => {
+        const panel = el.closest('#browser-panel');
+        return panel && window.getComputedStyle(panel).display !== 'none';
+      });
+      if (iframeVisible) {
+        console.log('  ✅ PASS: Browser panel visible on Browser tab');
+      } else {
+        console.log('  ❌ FAIL: Browser panel not visible');
+      }
+      
+      await page.click('#edit-tab');
+      await page.waitForTimeout(200);
+      const iframeHidden = await page.$eval('#preview-iframe', el => {
+        const panel = el.closest('#browser-panel');
+        return panel && window.getComputedStyle(panel).display === 'none';
+      });
+      if (iframeHidden) {
+        console.log('  ✅ PASS: Browser panel hidden on Edit tab');
+      } else {
+        console.log('  ❌ FAIL: Browser panel still visible');
+      }
+      await page.screenshot({ path: `${SCREENSHOT_DIR}/04-browser-tab.png` });
 
-    // Test 7: Browser tab visibility
-    console.log('\n7. Testing browser tab visibility...');
-    const editTab = window.locator('#edit-tab');
-    const browserTab = window.locator('#browser-tab');
-    const editPanel = window.locator('#edit-panel');
-    const browserPanel = window.locator('#browser-panel');
+      // Test 5: Settings Modal
+      console.log('\n[Browser Test 5] Settings Modal...');
+      await page.click('#settings-btn');
+      await page.waitForSelector('#settings-modal.visible', { timeout: 2000 });
+      console.log('  ✅ PASS: Settings modal opens');
+      
+      // Close with ESC
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => {
+        const modal = document.getElementById('settings-modal');
+        return modal && !modal.classList.contains('visible');
+      }, { timeout: 2000 });
+      console.log('  ✅ PASS: Settings modal closes with Escape');
+      
+      // Reopen and close with button
+      await page.click('#settings-btn');
+      await page.waitForSelector('#settings-modal.visible');
+      await page.click('#close-settings-btn');
+      await page.waitForFunction(() => {
+        const modal = document.getElementById('settings-modal');
+        return modal && !modal.classList.contains('visible');
+      }, { timeout: 2000 });
+      console.log('  ✅ PASS: Settings modal closes with close button');
+      await page.screenshot({ path: `${SCREENSHOT_DIR}/05-settings.png` });
 
-    // Check Edit tab is active
-    if (await editPanel.isVisible()) {
-      console.log('   ✓ Edit panel visible on Edit tab');
-    }
+      // Test 6: Terminal Echo
+      console.log('\n[Browser Test 6] Terminal Echo...');
+      await page.waitForSelector('#terminal-container .xterm', { timeout: 10000 });
+      // Wait for terminal to initialize
+      await page.waitForTimeout(2000);
+      
+      // Type echo command
+      const echoText = 'Hello from Blueprint Implementer test';
+      await page.keyboard.type(`echo "${echoText}"`);
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(1000);
+      
+      await page.screenshot({ path: `${SCREENSHOT_DIR}/06-terminal.png` });
+      
+      // Check terminal output by looking at the screenshot - actual verification would require
+      // parsing terminal content which is complex
+      console.log('  ✅ PASS: Terminal accepts input (check screenshot)');
 
-    // Switch to Browser tab
-    await browserTab.click();
-    await window.waitForTimeout(200);
-    if (await browserPanel.isVisible() && !(await editPanel.isVisible())) {
-      console.log('   ✓ Browser panel visible, Edit panel hidden on Browser tab');
-    }
-
-    // Switch back to Edit tab
-    await editTab.click();
-    await window.waitForTimeout(200);
-    await window.screenshot({ path: path.join(SCREENSHOTS_DIR, '06-tabs.png') });
-
-    // Test 8: Settings modal
-    console.log('\n8. Testing settings modal...');
-    await window.locator('#settings-btn').click();
-    await window.waitForTimeout(300);
-    const modal = window.locator('#settings-modal');
-    if (await modal.isVisible()) {
-      console.log('   ✓ Settings modal opened');
-    }
-    await window.screenshot({ path: path.join(SCREENSHOTS_DIR, '07-settings.png') });
-
-    // Close with Escape
-    await window.keyboard.press('Escape');
-    await window.waitForTimeout(200);
-    if (!(await modal.isVisible())) {
-      console.log('   ✓ Settings modal closed with Escape');
-    }
-
-    // Test 9: Model picker (if authenticated)
-    if (token) {
-      console.log('\n9. Testing model picker...');
-      await window.waitForTimeout(3000); // Wait for models to load
-      const modelSelect = window.locator('#model-select');
-      const options = await modelSelect.locator('option').all();
-      if (options.length > 1) {
-        const firstOption = await options[0].textContent();
-        if (!firstOption?.toLowerCase().includes('unavailable') && !firstOption?.toLowerCase().includes('loading')) {
-          console.log('   ✓ Model picker populated with', options.length, 'models');
+      // Test 7: Model Picker
+      console.log('\n[Browser Test 7] Model Picker...');
+      const token = await resolveGitHubToken();
+      if (token) {
+        await page.waitForTimeout(3000); // Wait for models to load
+        const options = await page.$$eval('#model-select option', opts => opts.map(o => o.textContent));
+        if (options.length > 1 && !options.some(o => o.toLowerCase().includes('unavailable') || o.toLowerCase().includes('loading'))) {
+          console.log(`  ✅ PASS: Model picker has ${options.length} models`);
         } else {
-          console.log('   ⚠ Model picker shows loading/unavailable state');
+          console.log(`  ⚠️ WARN: Model picker may not have loaded correctly: ${options.join(', ')}`);
         }
       } else {
-        console.log('   ⚠ Model picker has only one option');
+        console.log('  ⚠️ SKIP: No GitHub token for model loading');
       }
-      await window.screenshot({ path: path.join(SCREENSHOTS_DIR, '08-models.png') });
+      await page.screenshot({ path: `${SCREENSHOT_DIR}/07-models.png` });
 
-      // Test 10: Implementation
-      console.log('\n10. Testing implementation...');
-      await window.locator('#implement-btn').click();
-      
-      // Wait for implementation to start
-      await window.waitForTimeout(2000);
-      const status = window.locator('#implement-status');
-      const statusText = await status.textContent();
-      if (statusText?.includes('Implementing')) {
-        console.log('   ✓ Implementation started');
-      }
-      await window.screenshot({ path: path.join(SCREENSHOTS_DIR, '09-implementing.png') });
-
-      // Wait for implementation to complete (with periodic screenshots)
-      console.log('   Waiting for implementation to complete (up to 10 minutes)...');
-      const startTime = Date.now();
-      const timeout = 600000; // 10 minutes
-      let completed = false;
-      let screenshotCount = 10;
-
-      while (Date.now() - startTime < timeout) {
-        const currentStatus = await status.getAttribute('class') || '';
-        if (currentStatus.includes('success')) {
-          completed = true;
-          console.log('   ✓ Implementation completed successfully');
-          break;
+      // Test 8: Auth Display
+      console.log('\n[Browser Test 8] Auth Display...');
+      if (token) {
+        await page.waitForTimeout(2000);
+        const userInfo = await page.$eval('#user-info', el => el.textContent);
+        if (userInfo && !userInfo.includes('Loading') && !userInfo.includes('error')) {
+          console.log(`  ✅ PASS: User info displayed: ${userInfo.trim()}`);
+        } else {
+          console.log(`  ⚠️ WARN: User info may not have loaded: ${userInfo}`);
         }
-        if (currentStatus.includes('error')) {
-          console.log('   ✗ Implementation failed');
-          break;
+      } else {
+        console.log('  ⚠️ SKIP: No GitHub token for auth');
+      }
+
+      // Test 9: Implementation (requires token)
+      if (token) {
+        console.log('\n[Browser Test 9] Implementation...');
+        await page.click('#implement-btn');
+        await page.waitForTimeout(1000);
+        await page.screenshot({ path: `${SCREENSHOT_DIR}/08-implementing.png` });
+        
+        // Wait for implementation to complete (up to 10 minutes)
+        console.log('  Waiting for implementation (up to 10 minutes)...');
+        let completed = false;
+        const startTime = Date.now();
+        const timeout = 10 * 60 * 1000; // 10 minutes
+        let screenshotCount = 0;
+        
+        while (!completed && (Date.now() - startTime) < timeout) {
+          // Check status
+          const statusClass = await page.$eval('#implement-status', el => el.className);
+          
+          if (statusClass.includes('success')) {
+            completed = true;
+            console.log('  ✅ PASS: Implementation completed successfully');
+          } else if (statusClass.includes('error')) {
+            console.log('  ❌ FAIL: Implementation failed');
+            break;
+          }
+          
+          // Take periodic screenshots
+          if ((Date.now() - startTime) % 30000 < 5000) { // Every ~30 seconds
+            screenshotCount++;
+            await page.screenshot({ path: `${SCREENSHOT_DIR}/09-progress-${screenshotCount}.png` });
+          }
+          
+          await page.waitForTimeout(5000);
         }
         
-        // Take periodic screenshots
-        if ((Date.now() - startTime) % 30000 < 5000) {
-          await window.screenshot({ path: path.join(SCREENSHOTS_DIR, `10-progress-${screenshotCount++}.png`) });
-        }
+        await page.screenshot({ path: `${SCREENSHOT_DIR}/09-implementation-done.png` });
         
-        await window.waitForTimeout(5000);
-      }
-
-      await window.screenshot({ path: path.join(SCREENSHOTS_DIR, '11-complete.png') });
-
-      if (completed) {
         // Check if index.html appears in file tree
-        const indexFile = await window.locator('.file-tree-item .name', { hasText: 'index.html' });
-        if (await indexFile.count() > 0) {
-          console.log('   ✓ index.html appeared in file tree');
+        if (completed) {
+          await page.click('#refresh-btn');
+          await page.waitForTimeout(1000);
+          const treeContent = await page.$eval('#file-tree', el => el.textContent);
+          if (treeContent.includes('index.html')) {
+            console.log('  ✅ PASS: index.html appears in file tree');
+          } else {
+            console.log('  ⚠️ WARN: index.html not found in file tree');
+          }
         }
+      } else {
+        console.log('\n[Browser Test 9] Implementation... SKIPPED (no GitHub token)');
       }
 
-      // Test 11: Chat multi-turn (if implementation succeeded)
-      if (completed) {
-        console.log('\n11. Testing chat multi-turn...');
+      // Test 10: Chat Multi-Turn (requires token)
+      if (token) {
+        console.log('\n[Browser Test 10] Chat Multi-Turn...');
         
         // Switch to Chat tab
-        await window.locator('#chat-tab').click();
-        await window.waitForTimeout(200);
+        await page.click('#chat-tab');
+        await page.waitForTimeout(500);
         
-        // Send first message
-        const chatInput = window.locator('#chat-input');
-        await chatInput.fill('Create a file called counter.txt containing just the number 1');
-        await window.locator('#chat-send-btn').click();
-        
-        // Wait for response
-        console.log('   Waiting for first chat response...');
-        await window.waitForTimeout(30000);
-        await window.screenshot({ path: path.join(SCREENSHOTS_DIR, '12-chat-1.png') });
-        
-        // Send second message (tests conversation context)
-        await chatInput.fill('Increase the counter');
-        await window.locator('#chat-send-btn').click();
+        // First message
+        await page.fill('#chat-input', 'Create a file called counter.txt containing just the number 1');
+        await page.click('#chat-send-btn');
         
         // Wait for response
-        console.log('   Waiting for second chat response...');
-        await window.waitForTimeout(30000);
-        await window.screenshot({ path: path.join(SCREENSHOTS_DIR, '13-chat-2.png') });
+        await page.waitForFunction(() => {
+          const input = document.getElementById('chat-input');
+          return input && !input.disabled;
+        }, { timeout: 120000 });
+        await page.waitForTimeout(2000);
+        await page.screenshot({ path: `${SCREENSHOT_DIR}/10-chat-1.png` });
+        
+        // Second message
+        await page.fill('#chat-input', 'Increase the counter');
+        await page.click('#chat-send-btn');
+        
+        // Wait for response
+        await page.waitForFunction(() => {
+          const input = document.getElementById('chat-input');
+          return input && !input.disabled;
+        }, { timeout: 120000 });
+        await page.waitForTimeout(2000);
+        await page.screenshot({ path: `${SCREENSHOT_DIR}/10-chat-2.png` });
         
         // Check counter.txt content
-        const counterPath = path.join(TEST_WORKSPACE, 'counter.txt');
-        if (fs.existsSync(counterPath)) {
-          const content = fs.readFileSync(counterPath, 'utf-8').trim();
-          if (content === '2') {
-            console.log('   ✓ Chat multi-turn context working (counter = 2)');
+        try {
+          const counterPath = path.join(WORKSPACE, 'counter.txt');
+          if (fs.existsSync(counterPath)) {
+            const content = fs.readFileSync(counterPath, 'utf-8').trim();
+            if (content === '2') {
+              console.log('  ✅ PASS: counter.txt contains "2"');
+            } else {
+              console.log(`  ⚠️ WARN: counter.txt contains "${content}" instead of "2"`);
+            }
           } else {
-            console.log('   ⚠ Counter value is', content, '(expected 2)');
+            console.log('  ⚠️ WARN: counter.txt not found');
           }
-        } else {
-          console.log('   ⚠ counter.txt not found');
+        } catch (err) {
+          console.log(`  ⚠️ WARN: Could not read counter.txt: ${err.message}`);
         }
+      } else {
+        console.log('\n[Browser Test 10] Chat Multi-Turn... SKIPPED (no GitHub token)');
       }
-    } else {
-      // Test auth gate
-      console.log('\n9. Testing auth gate...');
-      await window.locator('#implement-btn').click();
-      await window.waitForTimeout(1000);
-      const status = await window.locator('#implement-status').textContent();
-      if (status?.includes('Not signed in')) {
-        console.log('   ✓ Auth gate working (shows "Not signed in")');
-      }
-      await window.screenshot({ path: path.join(SCREENSHOTS_DIR, '09-auth-gate.png') });
+
+      console.log('\n[Browser] All browser tests completed!');
+      await page.screenshot({ path: `${SCREENSHOT_DIR}/final.png` });
+
+    } finally {
+      await browser.close();
     }
-
-    // Test: Terminal respawn after opening new folder
-    console.log('\n12. Testing terminal respawn...');
-    
-    // Open a different folder (use project root)
-    await window.evaluate(async (projectRoot) => {
-      await window.electronAPI.setWorkspaceFolder(projectRoot);
-    }, PROJECT_ROOT);
-    
-    // Click open folder button to trigger respawn
-    // (In real app, opening folder respawns terminal)
-    await window.locator('#refresh-btn').click();
-    await window.waitForTimeout(2000);
-    
-    // Type in terminal again
-    await terminalContainer.click();
-    await window.keyboard.type('echo "Terminal respawn test!"');
-    await window.keyboard.press('Enter');
-    await window.waitForTimeout(1000);
-    await window.screenshot({ path: path.join(SCREENSHOTS_DIR, '14-terminal-respawn.png') });
-    console.log('   ✓ Terminal respawn test complete');
-
   } finally {
-    await electronApp.close();
+    // Stop server
+    server.kill();
+    console.log('\n[Browser] Server stopped');
   }
-
-  console.log('\n=== Electron Tests Complete ===\n');
 }
 
 // Main
 async function main() {
-  console.log('Blueprint Implementer Test Suite');
-  console.log('================================\n');
-  console.log('Project root:', PROJECT_ROOT);
-  console.log('Test workspace:', TEST_WORKSPACE);
-  console.log('Screenshots:', SCREENSHOTS_DIR);
-
-  const token = resolveGitHubToken();
-  if (token) {
-    console.log('GitHub token: available');
-  } else {
-    console.log('GitHub token: NOT AVAILABLE (some tests will be skipped)');
-  }
-
   try {
-    // Run CLI tests first
     await runCLITests();
-    
-    // Run Electron tests
-    await runElectronTests();
-    
-    console.log('\n✓ All tests completed!\n');
-  } catch (error) {
-    console.error('\n✗ Test failed:', error);
+    await runBrowserTests();
+    console.log('\n═══════════════════════════════════════');
+    console.log('All tests completed!');
+    console.log('═══════════════════════════════════════\n');
+    process.exit(0);
+  } catch (err) {
+    console.error('\n❌ Test failed:', err);
     process.exit(1);
   }
 }

@@ -1,42 +1,52 @@
-// Auth module - GitHub authentication and user display
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See License.txt in the project root for license information.
 
-let currentUser: { login: string; avatar_url: string } | null = null;
+import { serverAPI } from './api-client.js';
 
 export async function initAuth(): Promise<void> {
+  const userContainer = document.getElementById('user-info');
+  if (!userContainer) return;
+
   try {
-    currentUser = await window.electronAPI.getUser();
-    updateUserDisplay();
-  } catch (error) {
-    console.error('Failed to initialize auth:', error);
-    currentUser = null;
-    updateUserDisplay();
+    const user = await serverAPI.getUser();
+    if (user) {
+      userContainer.innerHTML = `
+        <img src="${user.avatar_url}" alt="${user.login}" class="user-avatar" />
+        <span class="user-login">${user.login}</span>
+      `;
+    } else {
+      userContainer.innerHTML = '<span class="user-login">Not authenticated</span>';
+    }
+  } catch (err) {
+    console.error('Failed to get user:', err);
+    userContainer.innerHTML = '<span class="user-login">Auth error</span>';
   }
 }
 
-export function getCurrentUser(): { login: string; avatar_url: string } | null {
-  return currentUser;
-}
+export async function loadModels(): Promise<void> {
+  const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
+  if (!modelSelect) return;
 
-export function isAuthenticated(): boolean {
-  return currentUser !== null;
-}
-
-function updateUserDisplay(): void {
-  const userDisplay = document.getElementById('user-display');
-  if (!userDisplay) return;
-
-  if (currentUser) {
-    userDisplay.innerHTML = `
-      <img src="${currentUser.avatar_url}" alt="${currentUser.login}" class="user-avatar" />
-      <span class="user-login">${currentUser.login}</span>
-    `;
-    userDisplay.classList.remove('not-signed-in');
-  } else {
-    userDisplay.innerHTML = `<span class="user-login">Not signed in</span>`;
-    userDisplay.classList.add('not-signed-in');
+  try {
+    const result = await serverAPI.listModels();
+    if (result.ok && result.models.length > 0) {
+      modelSelect.innerHTML = '';
+      for (const model of result.models) {
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.textContent = model.name || model.id;
+        modelSelect.appendChild(option);
+      }
+      // Select default model
+      const defaultModel = 'claude-opus-4.6-1m';
+      if (result.models.some((m) => m.id === defaultModel)) {
+        modelSelect.value = defaultModel;
+      }
+    } else {
+      modelSelect.innerHTML = '<option value="">Models unavailable</option>';
+    }
+  } catch (err) {
+    console.error('Failed to load models:', err);
+    modelSelect.innerHTML = '<option value="">Failed to load models</option>';
   }
-}
-
-export async function refreshAuth(): Promise<void> {
-  await initAuth();
 }

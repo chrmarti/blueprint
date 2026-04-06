@@ -45,3 +45,5 @@ coverage/
 *.o
 *.pyc
 __pycache__/
+
+test/screenshots

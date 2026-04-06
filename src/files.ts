@@ -1,97 +1,78 @@
-// Files module - sidebar file browser with Files and Git tabs
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See License.txt in the project root for license information.
 
-let currentFolder: string | null = null;
+import { serverAPI } from './api-client.js';
+import { openFile, getCurrentFilePath, clearEditor } from './editor.js';
+import type { DirEntry, GitStatusEntry } from './types.js';
+
 let selectedDirectory: string | null = null;
-let currentFile: string | null = null;
-let expandedDirs = new Set<string>();
-let onFileSelectCallback: ((filePath: string) => void) | null = null;
+let expandedDirectories: Set<string> = new Set();
 
-export function setOnFileSelect(callback: (filePath: string) => void): void {
-  onFileSelectCallback = callback;
+export function initFiles(): void {
+  setupFileTabs();
+  setupToolbarActions();
+  refreshFileTree();
 }
 
-export function getCurrentFile(): string | null {
-  return currentFile;
-}
-
-export function setCurrentFile(filePath: string | null): void {
-  currentFile = filePath;
-}
-
-export function getCurrentFolder(): string | null {
-  return currentFolder;
-}
-
-export async function initFilesPanel(): Promise<void> {
-  const folder = await window.electronAPI.getWorkspaceFolder();
-  if (folder) {
-    await openFolder(folder);
-  }
-
-  // Set up tab switching
+function setupFileTabs(): void {
   const filesTab = document.getElementById('files-tab');
   const gitTab = document.getElementById('git-tab');
   const filesPanel = document.getElementById('files-panel');
   const gitPanel = document.getElementById('git-panel');
 
-  filesTab?.addEventListener('click', () => {
-    filesTab.classList.add('active');
-    gitTab?.classList.remove('active');
-    filesPanel?.classList.add('active');
-    gitPanel?.classList.remove('active');
-  });
+  if (filesTab && gitTab && filesPanel && gitPanel) {
+    filesTab.addEventListener('click', () => {
+      filesTab.classList.add('active');
+      gitTab.classList.remove('active');
+      filesPanel.style.display = 'block';
+      gitPanel.style.display = 'none';
+    });
 
-  gitTab?.addEventListener('click', () => {
-    gitTab.classList.add('active');
-    filesTab?.classList.remove('active');
-    gitPanel?.classList.add('active');
-    filesPanel?.classList.remove('active');
-    refreshGitStatus();
-  });
-
-  // Set up toolbar actions
-  document.getElementById('new-file-btn')?.addEventListener('click', () => createNewFile());
-  document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder());
-  document.getElementById('refresh-btn')?.addEventListener('click', () => refreshFileTree());
-  document.getElementById('delete-btn')?.addEventListener('click', () => deleteSelected());
+    gitTab.addEventListener('click', () => {
+      gitTab.classList.add('active');
+      filesTab.classList.remove('active');
+      gitPanel.style.display = 'block';
+      filesPanel.style.display = 'none';
+      refreshGitStatus();
+    });
+  }
 }
 
-export async function openFolder(folder: string): Promise<void> {
-  currentFolder = folder;
-  await window.electronAPI.setWorkspaceFolder(folder);
-  expandedDirs.clear();
-  expandedDirs.add(folder);
-  await refreshFileTree();
-  updateFolderDisplay();
-}
+function setupToolbarActions(): void {
+  const newFileBtn = document.getElementById('new-file-btn');
+  const newFolderBtn = document.getElementById('new-folder-btn');
+  const refreshBtn = document.getElementById('refresh-btn');
+  const deleteBtn = document.getElementById('delete-btn');
 
-function updateFolderDisplay(): void {
-  const folderName = document.getElementById('folder-name');
-  if (folderName && currentFolder) {
-    const name = currentFolder.split('/').pop() || currentFolder;
-    folderName.textContent = name;
-    folderName.title = currentFolder;
+  if (newFileBtn) {
+    newFileBtn.addEventListener('click', () => createNewFile());
+  }
+  if (newFolderBtn) {
+    newFolderBtn.addEventListener('click', () => createNewFolder());
+  }
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => refreshFileTree());
+  }
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', () => deleteSelected());
   }
 }
 
 export async function refreshFileTree(): Promise<void> {
-  if (!currentFolder) return;
-
-  const fileTree = document.getElementById('file-tree');
-  if (!fileTree) return;
+  const container = document.getElementById('file-tree');
+  if (!container) return;
 
   try {
-    fileTree.innerHTML = '';
-    await renderDirectory(fileTree, currentFolder, 0);
-  } catch (error) {
-    console.error('Failed to refresh file tree:', error);
-    fileTree.innerHTML = '<div class="error">Failed to load files</div>';
+    const entries = await serverAPI.readDir();
+    container.innerHTML = '';
+    renderTree(container, entries, '');
+  } catch (err) {
+    console.error('Failed to load file tree:', err);
+    container.innerHTML = '<div class="error">Failed to load files</div>';
   }
 }
 
-async function renderDirectory(container: HTMLElement, dirPath: string, depth: number): Promise<void> {
-  const entries = await window.electronAPI.readDir(dirPath);
-  
+function renderTree(container: HTMLElement, entries: DirEntry[], basePath: string): void {
   // Sort: directories first, then alphabetically
   entries.sort((a, b) => {
     if (a.isDirectory !== b.isDirectory) {
@@ -101,233 +82,256 @@ async function renderDirectory(container: HTMLElement, dirPath: string, depth: n
   });
 
   for (const entry of entries) {
-    const fullPath = `${dirPath}/${entry.name}`;
+    const fullPath = basePath ? `${basePath}/${entry.name}` : entry.name;
     const item = document.createElement('div');
-    item.className = 'file-tree-item';
+    item.className = 'tree-item';
     item.dataset.path = fullPath;
-    item.style.paddingLeft = `${depth * 16 + 8}px`;
-
+    
+    const row = document.createElement('div');
+    row.className = 'tree-row';
+    
     if (entry.isDirectory) {
-      const isExpanded = expandedDirs.has(fullPath);
-      const arrow = isExpanded ? '▾' : '▸';
-      item.innerHTML = `<span class="arrow">${arrow}</span> <span class="icon">📁</span> <span class="name">${entry.name}</span>`;
-      item.classList.add('directory');
+      const isExpanded = expandedDirectories.has(fullPath);
+      const arrow = document.createElement('span');
+      arrow.className = 'tree-arrow';
+      arrow.textContent = isExpanded ? '▾' : '▸';
+      row.appendChild(arrow);
       
-      if (selectedDirectory === fullPath) {
-        item.classList.add('selected');
-      }
-
-      item.addEventListener('click', async (e) => {
+      const icon = document.createElement('span');
+      icon.className = 'tree-icon';
+      icon.textContent = '📁';
+      row.appendChild(icon);
+      
+      const name = document.createElement('span');
+      name.className = 'tree-name';
+      name.textContent = entry.name;
+      row.appendChild(name);
+      
+      item.appendChild(row);
+      
+      // Create children container
+      const children = document.createElement('div');
+      children.className = 'tree-children';
+      children.style.display = isExpanded ? 'block' : 'none';
+      item.appendChild(children);
+      
+      row.addEventListener('click', async (e) => {
         e.stopPropagation();
-        
         // Toggle expansion
-        if (expandedDirs.has(fullPath)) {
-          expandedDirs.delete(fullPath);
+        if (expandedDirectories.has(fullPath)) {
+          expandedDirectories.delete(fullPath);
+          arrow.textContent = '▸';
+          children.style.display = 'none';
         } else {
-          expandedDirs.add(fullPath);
+          expandedDirectories.add(fullPath);
+          arrow.textContent = '▾';
+          children.style.display = 'block';
+          // Load children if not already loaded
+          if (children.children.length === 0) {
+            try {
+              const childEntries = await serverAPI.readDir(fullPath);
+              renderTree(children, childEntries, fullPath);
+            } catch (err) {
+              console.error('Failed to load directory:', err);
+            }
+          }
         }
-        
-        // Select directory
-        selectedDirectory = fullPath;
-        currentFile = null;
-        
-        await refreshFileTree();
+        // Select this directory
+        selectDirectory(fullPath, row);
       });
-
-      container.appendChild(item);
-
-      // Render children if expanded
+      
+      // Load children if expanded
       if (isExpanded) {
-        const childContainer = document.createElement('div');
-        childContainer.className = 'directory-children';
-        await renderDirectory(childContainer, fullPath, depth + 1);
-        container.appendChild(childContainer);
+        serverAPI.readDir(fullPath).then((childEntries) => {
+          renderTree(children, childEntries, fullPath);
+        }).catch(console.error);
       }
     } else {
-      const icon = getFileIcon(entry.name);
-      item.innerHTML = `<span class="arrow"></span> <span class="icon">${icon}</span> <span class="name">${entry.name}</span>`;
-      item.classList.add('file');
+      const indent = document.createElement('span');
+      indent.className = 'tree-indent';
+      row.appendChild(indent);
       
-      if (currentFile === fullPath) {
-        item.classList.add('active');
-      }
-
-      item.addEventListener('click', async (e) => {
+      const icon = document.createElement('span');
+      icon.className = 'tree-icon';
+      icon.textContent = getFileIcon(entry.name);
+      row.appendChild(icon);
+      
+      const name = document.createElement('span');
+      name.className = 'tree-name';
+      name.textContent = entry.name;
+      row.appendChild(name);
+      
+      item.appendChild(row);
+      
+      row.addEventListener('click', (e) => {
         e.stopPropagation();
-        selectedDirectory = null;
-        currentFile = fullPath;
-        
-        if (onFileSelectCallback) {
-          onFileSelectCallback(fullPath);
-        }
-        
-        await refreshFileTree();
+        clearDirectorySelection();
+        selectFile(fullPath, row);
+        openFile(fullPath);
       });
-
-      container.appendChild(item);
     }
+    
+    container.appendChild(item);
   }
 }
 
-function getFileIcon(name: string): string {
-  const ext = name.split('.').pop()?.toLowerCase();
+function getFileIcon(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase();
   switch (ext) {
-    case 'md':
-      return '📝';
-    case 'html':
-    case 'htm':
-      return '🌐';
+    case 'md': return '📝';
+    case 'html': return '🌐';
     case 'ts':
-    case 'tsx':
     case 'js':
-    case 'jsx':
     case 'mjs':
-    case 'cjs':
       return '📜';
-    case 'json':
-      return '📋';
-    case 'css':
-    case 'scss':
-    case 'sass':
-      return '🎨';
+    case 'json': return '📋';
+    case 'css': return '🎨';
     case 'png':
     case 'jpg':
     case 'jpeg':
     case 'gif':
     case 'svg':
       return '🖼️';
-    default:
-      return '📄';
+    default: return '📄';
   }
 }
 
+function selectDirectory(path: string, row: HTMLElement): void {
+  clearSelection();
+  selectedDirectory = path;
+  row.classList.add('selected');
+}
+
+function clearDirectorySelection(): void {
+  selectedDirectory = null;
+  document.querySelectorAll('.tree-row.selected').forEach((el) => {
+    el.classList.remove('selected');
+  });
+}
+
+function selectFile(path: string, row: HTMLElement): void {
+  document.querySelectorAll('.tree-row.active').forEach((el) => {
+    el.classList.remove('active');
+  });
+  row.classList.add('active');
+}
+
+function clearSelection(): void {
+  document.querySelectorAll('.tree-row.selected, .tree-row.active').forEach((el) => {
+    el.classList.remove('selected', 'active');
+  });
+}
+
 async function createNewFile(): Promise<void> {
-  if (!currentFolder) return;
-
-  const targetDir = selectedDirectory || (currentFile ? currentFile.split('/').slice(0, -1).join('/') : currentFolder);
+  const targetDir = selectedDirectory || '';
+  const name = prompt('Enter file name:');
+  if (!name) return;
   
-  const fileName = prompt('Enter file name:');
-  if (!fileName) return;
-
-  const fullPath = `${targetDir}/${fileName}`;
-  
+  const path = targetDir ? `${targetDir}/${name}` : name;
   try {
-    await window.electronAPI.writeFile(fullPath, '');
+    await serverAPI.writeFile(path, '');
     await refreshFileTree();
-    
-    // Select the new file
-    currentFile = fullPath;
-    if (onFileSelectCallback) {
-      onFileSelectCallback(fullPath);
-    }
-  } catch (error) {
-    console.error('Failed to create file:', error);
-    alert('Failed to create file');
+    openFile(path);
+  } catch (err) {
+    alert(`Failed to create file: ${err}`);
   }
 }
 
 async function createNewFolder(): Promise<void> {
-  if (!currentFolder) return;
-
-  const targetDir = selectedDirectory || currentFolder;
+  const targetDir = selectedDirectory || '';
+  const name = prompt('Enter folder name:');
+  if (!name) return;
   
-  const folderName = prompt('Enter folder name:');
-  if (!folderName) return;
-
-  const fullPath = `${targetDir}/${folderName}`;
-  
+  const path = targetDir ? `${targetDir}/${name}/.keep` : `${name}/.keep`;
   try {
-    // Create folder by writing a .keep file
-    await window.electronAPI.writeFile(`${fullPath}/.keep`, '');
-    expandedDirs.add(fullPath);
+    await serverAPI.writeFile(path, '');
     await refreshFileTree();
-  } catch (error) {
-    console.error('Failed to create folder:', error);
-    alert('Failed to create folder');
+    // Expand the new folder
+    const folderPath = path.replace('/.keep', '');
+    expandedDirectories.add(folderPath);
+    await refreshFileTree();
+  } catch (err) {
+    alert(`Failed to create folder: ${err}`);
   }
 }
 
 async function deleteSelected(): Promise<void> {
-  const pathToDelete = selectedDirectory || currentFile;
+  let pathToDelete: string | null = null;
+  let isDirectory = false;
+  
+  if (selectedDirectory) {
+    pathToDelete = selectedDirectory;
+    isDirectory = true;
+  } else {
+    pathToDelete = getCurrentFilePath();
+  }
+  
   if (!pathToDelete) {
     alert('No file or folder selected');
     return;
   }
-
-  const isDirectory = selectedDirectory !== null;
-  const name = pathToDelete.split('/').pop();
+  
   const message = isDirectory
-    ? `Delete folder "${name}" and all its contents?`
-    : `Delete file "${name}"?`;
-
+    ? `Delete folder "${pathToDelete}" and all its contents?`
+    : `Delete file "${pathToDelete}"?`;
+  
   if (!confirm(message)) return;
-
+  
   try {
-    await window.electronAPI.deleteEntry(pathToDelete);
-    
-    if (currentFile === pathToDelete) {
-      currentFile = null;
+    await serverAPI.deleteEntry(pathToDelete);
+    if (pathToDelete === getCurrentFilePath()) {
+      clearEditor();
     }
     selectedDirectory = null;
-    
     await refreshFileTree();
-  } catch (error) {
-    console.error('Failed to delete:', error);
-    alert('Failed to delete');
+  } catch (err) {
+    alert(`Failed to delete: ${err}`);
   }
 }
 
-// Git status functionality
 export async function refreshGitStatus(): Promise<void> {
-  const gitPanel = document.getElementById('git-panel');
-  const gitList = document.getElementById('git-list');
-  if (!gitPanel || !gitList) return;
+  const container = document.getElementById('git-list');
+  if (!container) return;
 
   try {
-    const entries = await window.electronAPI.gitStatus();
+    const entries = await serverAPI.gitStatus();
+    container.innerHTML = '';
     
     if (entries.length === 0) {
-      gitList.innerHTML = '<div class="no-changes">No changes</div>';
+      container.innerHTML = '<div class="no-changes">No changes</div>';
       return;
     }
-
-    gitList.innerHTML = '';
+    
     for (const entry of entries) {
       const item = document.createElement('div');
       item.className = 'git-item';
       
       const badge = document.createElement('span');
       badge.className = `git-badge ${getStatusClass(entry.status)}`;
-      badge.textContent = entry.status.trim().charAt(0) || '?';
-      
-      const file = document.createElement('span');
-      file.className = 'git-file';
-      file.textContent = entry.file;
-      
+      badge.textContent = entry.status.charAt(0).toUpperCase();
       item.appendChild(badge);
-      item.appendChild(file);
-      gitList.appendChild(item);
+      
+      const path = document.createElement('span');
+      path.className = 'git-path';
+      path.textContent = entry.file;
+      item.appendChild(path);
+      
+      container.appendChild(item);
     }
-  } catch (error) {
-    console.error('Failed to get git status:', error);
-    gitList.innerHTML = '<div class="error">Failed to get git status</div>';
+  } catch (err) {
+    console.error('Failed to load git status:', err);
+    container.innerHTML = '<div class="error">Failed to load git status</div>';
   }
 }
 
 function getStatusClass(status: string): string {
-  const code = status.trim().charAt(0);
-  switch (code) {
-    case 'M':
-      return 'modified';
-    case 'A':
-      return 'added';
-    case 'D':
-      return 'deleted';
-    case 'R':
-      return 'renamed';
-    case '?':
-      return 'untracked';
-    default:
-      return 'other';
+  const first = status.charAt(0);
+  switch (first) {
+    case 'M': return 'modified';
+    case 'A': return 'added';
+    case 'D': return 'deleted';
+    case '?': return 'untracked';
+    case 'R': return 'renamed';
+    default: return 'other';
   }
 }

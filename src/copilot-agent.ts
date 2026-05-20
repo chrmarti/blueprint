@@ -282,18 +282,8 @@ export async function listModels(): Promise<Array<{ id: string; name: string }>>
   });
 
   try {
-    // Wait for client to connect before listing models
-    let attempts = 0;
-    const maxAttempts = 30;
-    while (tempClient.getState() !== 'connected' && attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-      attempts++;
-    }
-    
-    if (tempClient.getState() !== 'connected') {
-      throw new Error('Client failed to connect');
-    }
-    
+    await tempClient.start();
+
     const models = await tempClient.listModels();
     return models.map((m: { id: string; name?: string }) => ({
       id: m.id,

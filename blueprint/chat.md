@@ -16,7 +16,8 @@ The chat panel provides a conversational interface for iterating on the blueprin
 
 - Uses the same shared `copilot-agent.ts` module and Copilot SDK infrastructure as the Output panel, but with a distinct system prompt.
 - The system prompt focuses on **updating the blueprint**: the agent's role is to help the user refine, restructure, and extend the markdown blueprint. It should not modify implementation files unless the user explicitly asks for it.
-- The agent has access to the same file tools as the implementation agent, so it can read and write files in the workspace — primarily `blueprint.md` and files under `/blueprint`.
+- The agent has access to the same file tools as the implementation agent, so it can read and write files in the workspace — primarily the files listed in `.blueprintfiles`.
+- The agent reads `.blueprintfiles` to determine which files and directories are part of the blueprint. These are the files it should focus on reading and updating.
 - The conversation context includes the current contents of `blueprint.md` so the agent can reason about the existing blueprint.
 - Each chat session maintains its own conversation history (list of user/assistant message pairs) for multi-turn context.
 - The file tree auto-refreshes when the agent signals `files_changed`.
